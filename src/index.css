@@ -1,0 +1,54 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Playfair Display", serif;
+  --font-mono: "JetBrains Mono", monospace;
+  
+  --color-academic-900: #1a1a1a;
+  --color-academic-800: #2d2d2d;
+  --color-academic-700: #404040;
+  --color-academic-100: #f5f5f5;
+  --color-accent: #c5a059; /* Gold/Academic accent */
+}
+
+@layer base {
+  body {
+    @apply bg-academic-100 text-academic-900 font-sans;
+  }
+  
+  h1, h2, h3, h4 {
+    @apply font-serif font-bold tracking-tight;
+  }
+}
+
+.glass-card {
+  @apply bg-white/80 backdrop-blur-md border border-white/20 shadow-xl rounded-2xl;
+}
+
+.academic-input {
+  @apply w-full px-4 py-2 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-accent focus:border-transparent outline-none transition-all;
+}
+
+.btn-primary {
+  @apply px-6 py-2 bg-academic-900 text-white rounded-lg hover:bg-academic-800 transition-all font-medium flex items-center gap-2;
+}
+
+.btn-secondary {
+  @apply px-6 py-2 bg-white text-academic-900 border border-academic-900 rounded-lg hover:bg-gray-50 transition-all font-medium flex items-center gap-2;
+}
+
+.markdown-body {
+  @apply text-academic-900 leading-relaxed;
+}
+
+.markdown-body h1 { @apply text-3xl mb-6 mt-12 border-b pb-2; }
+.markdown-body h2 { @apply text-2xl mb-4 mt-8; }
+.markdown-body h3 { @apply text-xl mb-3 mt-6; }
+.markdown-body p { @apply mb-4 text-justify; }
+.markdown-body ul { @apply list-disc ml-6 mb-4; }
+.markdown-body ol { @apply list-decimal ml-6 mb-4; }
+.markdown-body li { @apply mb-2; }
+.markdown-body blockquote { @apply border-l-4 border-gray-200 pl-4 italic my-6; }
+

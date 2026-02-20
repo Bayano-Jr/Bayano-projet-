@@ -1,0 +1,5 @@
+{
+  "name": "AcademiaGen - Générateur de Mémoires IA",
+  "description": "Plateforme SaaS professionnelle pour la génération automatique de mémoires académiques (60+ pages) utilisant Gemini 1.5 Pro.",
+  "requestFramePermissions": []
+}
