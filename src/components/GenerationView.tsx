@@ -3,6 +3,7 @@ import { Loader2, CheckCircle2, AlertCircle, FileText, Download, Eye } from 'luc
 import { motion } from 'motion/react';
 import { Project, PlanStructure, Chapter } from '../types';
 import { generateChapterContent, generateFrontMatter } from '../services/geminiService';
+import { storageService } from '../services/storageService';
 
 interface GenerationViewProps {
   project: Project;
@@ -18,7 +19,7 @@ export default function GenerationView({ project, onComplete }: GenerationViewPr
   const [error, setError] = useState<string | null>(null);
 
   const plan: PlanStructure = JSON.parse(project.plan || '{}');
-  const totalSteps = plan.chapitres.length + 1; // Front matter + Chapters
+  const totalSteps = plan.chapitres.length + 4; // Front matter + Intro + Chapters + Conclusion + Biblio
 
   const startGeneration = async () => {
     setStatus('generating');
@@ -30,49 +31,93 @@ export default function GenerationView({ project, onComplete }: GenerationViewPr
       const frontMatter = await generateFrontMatter(project);
       
       // Save front matter as a special chapter or metadata
-      await fetch(`/api/projects/${project.id}/chapters`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: `front-${project.id}`,
-          title: 'Éléments Préliminaires',
-          content: JSON.stringify(frontMatter),
-          order_index: -1,
-          word_count: 500
-        })
-      });
+      const frontMatterChapter: Chapter = {
+        id: `front-${project.id}`,
+        project_id: project.id,
+        title: 'Éléments Préliminaires',
+        content: JSON.stringify(frontMatter),
+        order_index: -1,
+        word_count: 500
+      };
+      storageService.saveChapter(frontMatterChapter);
+      setChapters([frontMatterChapter]);
+      setProgress((1 / totalSteps) * 100);
 
-      // 2. Generate Chapters sequentially
-      let context = "";
+      // 2. Generate Introduction
+      setCurrentStep(1);
+      const introContent = await generateChapterContent(project, plan, plan.introduction.titre, "");
+      const introChapter: Chapter = {
+        id: `${project.id}-intro`,
+        project_id: project.id,
+        title: plan.introduction.titre,
+        content: introContent,
+        order_index: 0,
+        word_count: introContent.split(/\s+/).length
+      };
+      storageService.saveChapter(introChapter);
+      setChapters(prev => [...prev, introChapter]);
+      setTotalWords(prev => prev + introChapter.word_count);
+      let context = `Résumé de l'introduction: ${introContent.substring(0, 500)}...\n`;
+      setProgress((2 / totalSteps) * 100);
+
+      // 3. Generate Chapters sequentially
       for (let i = 0; i < plan.chapitres.length; i++) {
         const chapTitle = plan.chapitres[i].titre;
-        setCurrentStep(i + 1);
-        setProgress(((i + 1) / totalSteps) * 100);
+        setCurrentStep(i + 2);
+        setProgress(((i + 3) / totalSteps) * 100);
 
         const content = await generateChapterContent(project, plan, chapTitle, context);
         const wordCount = content.split(/\s+/).length;
         
-        const chapterData = {
+        const chapterData: Chapter = {
           id: `${project.id}-ch-${i}`,
+          project_id: project.id,
           title: chapTitle,
           content: content,
-          order_index: i,
+          order_index: i + 1,
           word_count: wordCount
         };
 
-        await fetch(`/api/projects/${project.id}/chapters`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(chapterData)
-        });
+        storageService.saveChapter(chapterData);
 
-        setChapters(prev => [...prev, chapterData as Chapter]);
+        setChapters(prev => [...prev, chapterData]);
         setTotalWords(prev => prev + wordCount);
         context += `\nRésumé du chapitre ${i+1}: ${content.substring(0, 500)}...\n`;
       }
 
-      // 3. Generate Conclusion
-      // (Simplified for this demo, could be another step)
+      // 4. Generate Conclusion
+      setCurrentStep(plan.chapitres.length + 2);
+      const conclusionContent = await generateChapterContent(project, plan, "CONCLUSION GÉNÉRALE", context);
+      const conclusionChapter: Chapter = {
+        id: `${project.id}-conclusion`,
+        project_id: project.id,
+        title: 'CONCLUSION GÉNÉRALE',
+        content: conclusionContent,
+        order_index: 999,
+        word_count: conclusionContent.split(/\s+/).length
+      };
+      storageService.saveChapter(conclusionChapter);
+      setChapters(prev => [...prev, conclusionChapter]);
+      setProgress(((plan.chapitres.length + 3) / totalSteps) * 100);
+
+      // 5. Generate Bibliography (Detailed)
+      setCurrentStep(plan.chapitres.length + 3);
+      const biblioContent = await generateChapterContent(project, plan, "BIBLIOGRAPHIE DÉTAILLÉE", context);
+      const biblioChapter: Chapter = {
+        id: `${project.id}-biblio`,
+        project_id: project.id,
+        title: 'BIBLIOGRAPHIE DÉTAILLÉE',
+        content: biblioContent,
+        order_index: 1000,
+        word_count: biblioContent.split(/\s+/).length
+      };
+      storageService.saveChapter(biblioChapter);
+      setChapters(prev => [...prev, biblioChapter]);
+      setProgress(100);
+
+      // Update project status to completed
+      const updatedProject = { ...project, status: 'completed' as const };
+      storageService.saveProject(updatedProject);
 
       setStatus('idle');
       onComplete();
@@ -86,36 +131,40 @@ export default function GenerationView({ project, onComplete }: GenerationViewPr
   const estimatedPages = Math.round(totalWords / 300);
 
   return (
-    <div className="max-w-4xl mx-auto p-8">
-      <div className="glass-card p-10 text-center">
-        <h2 className="text-3xl mb-4">Rédaction du Mémoire</h2>
-        <p className="text-gray-500 mb-10">
-          Gemini rédige actuellement votre mémoire en respectant les normes académiques. 
-          Cette opération peut prendre plusieurs minutes.
+    <div className="max-w-4xl mx-auto px-4 md:px-12 py-8 md:py-20">
+      <div className="glass-card p-8 md:p-20 text-center">
+        <div className="w-20 h-20 bg-academic-900 rounded-3xl flex items-center justify-center mx-auto mb-10 shadow-2xl shadow-academic-900/20">
+          <Sparkles className="text-white animate-pulse" size={32} />
+        </div>
+        <h2 className="text-4xl md:text-6xl mb-6 font-serif font-medium tracking-tight">Rédaction en cours</h2>
+        <p className="text-lg text-slate-500 mb-16 font-serif italic max-w-xl mx-auto">
+          Bayano Académie orchestre la rédaction de votre mémoire. 
+          Chaque chapitre est ciselé pour répondre aux plus hautes exigences académiques.
         </p>
 
-        <div className="mb-12">
-          <div className="flex justify-between text-sm mb-2">
-            <span className="font-medium">Progression globale</span>
-            <span className="text-accent font-bold">{Math.round(progress)}%</span>
+        <div className="mb-20">
+          <div className="flex justify-between text-xs font-bold uppercase tracking-widest mb-4 text-slate-400">
+            <span>Progression de l'œuvre</span>
+            <span className="text-accent">{Math.round(progress)}%</span>
           </div>
-          <div className="h-4 bg-gray-100 rounded-full overflow-hidden">
+          <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
             <motion.div 
-              className="h-full bg-accent"
+              className="h-full bg-accent shadow-[0_0_15px_rgba(180,83,9,0.4)]"
               initial={{ width: 0 }}
               animate={{ width: `${progress}%` }}
+              transition={{ duration: 1 }}
             />
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-6 mb-12">
-          <div className="p-6 bg-gray-50 rounded-2xl border border-gray-100">
-            <div className="text-gray-400 text-sm mb-1 uppercase tracking-wider font-bold">Volume estimé</div>
-            <div className="text-3xl font-serif">{estimatedPages} / {project.min_pages} pages</div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-8 mb-20">
+          <div className="p-8 bg-slate-50/50 rounded-3xl border border-slate-100 shadow-inner">
+            <div className="text-slate-300 text-[10px] mb-2 uppercase tracking-[0.2em] font-bold">Volume de l'ouvrage</div>
+            <div className="text-4xl font-serif text-academic-900">{estimatedPages} <span className="text-lg text-slate-400">/ {project.min_pages} pages</span></div>
           </div>
-          <div className="p-6 bg-gray-50 rounded-2xl border border-gray-100">
-            <div className="text-gray-400 text-sm mb-1 uppercase tracking-wider font-bold">Mots générés</div>
-            <div className="text-3xl font-serif">{totalWords.toLocaleString()}</div>
+          <div className="p-8 bg-slate-50/50 rounded-3xl border border-slate-100 shadow-inner">
+            <div className="text-slate-300 text-[10px] mb-2 uppercase tracking-[0.2em] font-bold">Mots rédigés</div>
+            <div className="text-4xl font-serif text-academic-900">{totalWords.toLocaleString()}</div>
           </div>
         </div>
 

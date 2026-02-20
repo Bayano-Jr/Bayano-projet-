@@ -6,6 +6,7 @@ import GenerationView from './components/GenerationView';
 import ProjectDetail from './components/ProjectDetail';
 import { Project, PlanStructure } from './types';
 import { generatePlan } from './services/geminiService';
+import { storageService } from './services/storageService';
 import { BookOpen, Sparkles } from 'lucide-react';
 
 type View = 'dashboard' | 'wizard' | 'plan_editor' | 'generation' | 'detail';
@@ -20,42 +21,41 @@ export default function App() {
   const handleNewProject = () => setView('wizard');
 
   const handleSelectProject = (id: string) => {
-    fetch(`/api/projects/${id}`)
-      .then(res => res.json())
-      .then(data => {
-        setCurrentProject(data);
-        setSelectedProjectId(id);
-        if (data.status === 'draft') {
-          // If it's a draft but has no plan, we might need to regenerate or it shouldn't happen
-          // For now, if it's a draft, we assume we need to validate the plan
-          setGeneratedPlan(JSON.parse(data.plan || '{}'));
-          setView('plan_editor');
-        } else if (data.status === 'plan_validated') {
-          setView('generation');
-        } else {
-          setView('detail');
-        }
-      });
+    const data = storageService.getProject(id);
+    if (data) {
+      setCurrentProject(data);
+      setSelectedProjectId(id);
+      if (data.status === 'draft') {
+        setGeneratedPlan(JSON.parse(data.plan || '{}'));
+        setView('plan_editor');
+      } else if (data.status === 'plan_validated') {
+        setView('generation');
+      } else {
+        setView('detail');
+      }
+    }
   };
 
   const handleWizardComplete = async (data: Partial<Project>) => {
     setIsGeneratingPlan(true);
     const id = Math.random().toString(36).substring(7);
-    const newProject = { ...data, id } as Project;
+    const newProject = { 
+      ...data, 
+      id, 
+      status: 'draft', 
+      created_at: new Date().toISOString() 
+    } as Project;
     
     try {
       // 1. Generate Plan with Gemini
       const plan = await generatePlan(newProject);
       setGeneratedPlan(plan);
       
-      // 2. Save Project to DB
-      await fetch('/api/projects', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...newProject, plan: JSON.stringify(plan) })
-      });
+      // 2. Save Project to Storage
+      const projectToSave = { ...newProject, plan: JSON.stringify(plan) };
+      storageService.saveProject(projectToSave);
 
-      setCurrentProject({ ...newProject, plan: JSON.stringify(plan), status: 'draft', created_at: new Date().toISOString() });
+      setCurrentProject(projectToSave);
       setSelectedProjectId(id);
       setIsGeneratingPlan(false);
       setView('plan_editor');
@@ -69,11 +69,7 @@ export default function App() {
   const handlePlanValidate = async (updatedPlan: PlanStructure) => {
     if (!selectedProjectId) return;
     
-    await fetch(`/api/projects/${selectedProjectId}/plan`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ plan: updatedPlan })
-    });
+    storageService.updateProjectPlan(selectedProjectId, updatedPlan);
 
     setCurrentProject(prev => prev ? { ...prev, plan: JSON.stringify(updatedPlan), status: 'plan_validated' } : null);
     setView('generation');
@@ -86,29 +82,38 @@ export default function App() {
   return (
     <div className="min-h-screen bg-academic-100">
       {/* Navigation Bar */}
-      <nav className="bg-white border-b border-gray-200 px-8 py-4 flex justify-between items-center sticky top-0 z-50">
+      <nav className="bg-white/80 backdrop-blur-md border-b border-slate-100 px-4 md:px-12 py-4 md:py-6 flex justify-between items-center sticky top-0 z-50">
         <div 
-          className="flex items-center gap-2 cursor-pointer" 
+          className="flex items-center gap-3 cursor-pointer group" 
           onClick={() => setView('dashboard')}
         >
-          <div className="bg-academic-900 p-2 rounded-lg text-white">
-            <BookOpen size={24} />
+          <div className="bg-academic-900 p-2 md:p-2.5 rounded-2xl text-white shadow-lg shadow-academic-900/20 group-hover:scale-110 transition-transform duration-500">
+            <BookOpen size={22} className="md:w-6 md:h-6" />
           </div>
-          <span className="text-2xl font-serif font-bold tracking-tight">AcademiaGen</span>
+          <div className="flex flex-col">
+            <span className="text-xl md:text-2xl font-serif font-bold tracking-tight text-academic-900">Bayano Académie</span>
+            <span className="text-[10px] uppercase tracking-[0.2em] font-bold text-accent/80 -mt-1">Excellence & IA</span>
+          </div>
         </div>
         
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2 text-sm font-medium text-gray-500">
-            <Sparkles size={16} className="text-accent" />
+        <div className="flex items-center gap-4 md:gap-8">
+          <div className="hidden lg:flex items-center gap-3 text-xs font-bold uppercase tracking-widest text-slate-400">
+            <Sparkles size={14} className="text-accent animate-pulse" />
             Propulsé par Gemini 1.5 Pro
           </div>
-          <div className="w-10 h-10 rounded-full bg-accent/20 border border-accent/30 flex items-center justify-center font-bold text-accent">
-            JD
+          <div className="flex items-center gap-3 pl-4 md:pl-8 border-l border-slate-100">
+            <div className="hidden sm:flex flex-col items-end">
+              <span className="text-sm font-bold text-academic-900">Jean Dupont</span>
+              <span className="text-[10px] text-slate-400 uppercase tracking-wider">Chercheur</span>
+            </div>
+            <div className="w-10 h-10 md:w-12 md:h-12 rounded-2xl bg-academic-900 text-white flex items-center justify-center font-serif text-lg shadow-xl shadow-academic-900/10 border border-white/10">
+              JD
+            </div>
           </div>
         </div>
       </nav>
 
-      <main className="py-8">
+      <main className="py-4 md:py-8">
         {isGeneratingPlan ? (
           <div className="flex flex-col items-center justify-center p-20 text-center">
             <div className="relative mb-8">
@@ -134,8 +139,9 @@ export default function App() {
                 onComplete={handleWizardComplete} 
               />
             )}
-            {view === 'plan_editor' && generatedPlan && (
+            {view === 'plan_editor' && generatedPlan && currentProject && (
               <PlanEditor 
+                project={currentProject}
                 plan={generatedPlan} 
                 onValidate={handlePlanValidate} 
               />

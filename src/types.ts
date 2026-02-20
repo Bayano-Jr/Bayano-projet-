@@ -7,6 +7,8 @@ export interface Project {
   level: string;
   norm: string;
   min_pages: number;
+  instructions?: string;
+  referenceText?: string;
   plan?: string; // JSON string
   status: 'draft' | 'plan_validated' | 'generating' | 'completed';
   created_at: string;
@@ -23,7 +25,13 @@ export interface Chapter {
 }
 
 export interface PlanStructure {
-  introduction_generale: string;
+  introduction: {
+    titre: string;
+    sections: {
+      titre: string;
+      sous_sections: string[];
+    }[];
+  };
   chapitres: {
     titre: string;
     sections: {
@@ -32,5 +40,6 @@ export interface PlanStructure {
     }[];
   }[];
   conclusion_generale: string;
+  annexes?: string[];
   bibliographie_indicative: string[];
 }

@@ -1,54 +1,55 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=JetBrains+Mono&display=swap');
 @import "tailwindcss";
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-serif: "Playfair Display", serif;
+  --font-serif: "Cormorant Garamond", serif;
   --font-mono: "JetBrains Mono", monospace;
   
-  --color-academic-900: #1a1a1a;
-  --color-academic-800: #2d2d2d;
-  --color-academic-700: #404040;
-  --color-academic-100: #f5f5f5;
-  --color-accent: #c5a059; /* Gold/Academic accent */
+  --color-academic-900: #0F172A;
+  --color-academic-800: #1E293B;
+  --color-academic-700: #334155;
+  --color-academic-100: #F8FAFC;
+  --color-accent: #B45309; /* Deep Amber/Gold */
+  --color-paper: #FDFCFB;
 }
 
 @layer base {
   body {
-    @apply bg-academic-100 text-academic-900 font-sans;
+    @apply bg-paper text-academic-900 font-sans antialiased;
   }
   
   h1, h2, h3, h4 {
-    @apply font-serif font-bold tracking-tight;
+    @apply font-serif font-medium tracking-tight leading-tight;
   }
 }
 
 .glass-card {
-  @apply bg-white/80 backdrop-blur-md border border-white/20 shadow-xl rounded-2xl;
+  @apply bg-white border border-slate-200/60 shadow-[0_8px_30px_rgb(0,0,0,0.04)] rounded-3xl transition-all duration-500 hover:shadow-[0_20px_50px_rgb(0,0,0,0.08)];
 }
 
 .academic-input {
-  @apply w-full px-4 py-2 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-accent focus:border-transparent outline-none transition-all;
+  @apply w-full px-5 py-4 bg-white border border-slate-200 rounded-2xl focus:ring-2 focus:ring-accent/20 focus:border-accent outline-none transition-all text-base md:text-sm placeholder:text-slate-400;
 }
 
 .btn-primary {
-  @apply px-6 py-2 bg-academic-900 text-white rounded-lg hover:bg-academic-800 transition-all font-medium flex items-center gap-2;
+  @apply px-8 py-3.5 bg-academic-900 text-white rounded-2xl hover:bg-academic-800 active:scale-[0.98] transition-all duration-300 font-medium flex items-center justify-center gap-2.5 shadow-lg shadow-academic-900/10 hover:shadow-academic-900/20 disabled:opacity-50 disabled:pointer-events-none;
 }
 
 .btn-secondary {
-  @apply px-6 py-2 bg-white text-academic-900 border border-academic-900 rounded-lg hover:bg-gray-50 transition-all font-medium flex items-center gap-2;
+  @apply px-8 py-3.5 bg-white text-academic-900 border border-slate-200 rounded-2xl hover:bg-slate-50 active:scale-[0.98] transition-all duration-300 font-medium flex items-center justify-center gap-2.5;
 }
 
 .markdown-body {
-  @apply text-academic-900 leading-relaxed;
+  @apply text-academic-900 leading-[1.8] font-serif text-lg;
 }
 
-.markdown-body h1 { @apply text-3xl mb-6 mt-12 border-b pb-2; }
-.markdown-body h2 { @apply text-2xl mb-4 mt-8; }
-.markdown-body h3 { @apply text-xl mb-3 mt-6; }
-.markdown-body p { @apply mb-4 text-justify; }
-.markdown-body ul { @apply list-disc ml-6 mb-4; }
-.markdown-body ol { @apply list-decimal ml-6 mb-4; }
-.markdown-body li { @apply mb-2; }
-.markdown-body blockquote { @apply border-l-4 border-gray-200 pl-4 italic my-6; }
+.markdown-body h1 { @apply text-4xl mb-10 mt-16 border-b border-slate-100 pb-6 font-serif font-semibold; }
+.markdown-body h2 { @apply text-3xl mb-6 mt-12 font-serif font-semibold; }
+.markdown-body h3 { @apply text-2xl mb-4 mt-8 font-serif font-medium; }
+.markdown-body p { @apply mb-6 text-justify; }
+.markdown-body ul { @apply list-disc ml-8 mb-6 space-y-2; }
+.markdown-body ol { @apply list-decimal ml-8 mb-6 space-y-2; }
+.markdown-body li { @apply pl-2; }
+.markdown-body blockquote { @apply border-l-2 border-accent/30 pl-8 italic my-10 text-slate-600 font-serif; }
 

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, BookOpen, Clock, ChevronRight, FileText, Download } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Project } from '../types';
+import { storageService } from '../services/storageService';
 
 interface DashboardProps {
   onNewProject: () => void;
@@ -13,23 +14,20 @@ export default function Dashboard({ onNewProject, onSelectProject }: DashboardPr
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/api/projects')
-      .then(res => res.json())
-      .then(data => {
-        setProjects(data);
-        setLoading(false);
-      });
+    const data = storageService.getProjects();
+    setProjects(data);
+    setLoading(false);
   }, []);
 
   return (
-    <div className="max-w-6xl mx-auto p-8">
-      <header className="flex justify-between items-center mb-12">
-        <div>
-          <h1 className="text-4xl mb-2">Tableau de Bord</h1>
-          <p className="text-gray-500">Gérez vos projets de mémoires académiques</p>
+    <div className="max-w-7xl mx-auto px-4 md:px-12 py-8 md:py-16">
+      <header className="flex flex-col lg:flex-row justify-between items-start lg:items-end gap-6 mb-12 md:mb-20">
+        <div className="max-w-2xl">
+          <h1 className="text-4xl md:text-6xl mb-4 font-serif font-medium tracking-tight">Vos Travaux Académiques</h1>
+          <p className="text-lg text-slate-500 font-serif italic">Gérez et rédigez vos mémoires avec la précision de l'intelligence artificielle.</p>
         </div>
-        <button onClick={onNewProject} className="btn-primary">
-          <Plus size={20} />
+        <button onClick={onNewProject} className="btn-primary w-full lg:w-auto group">
+          <Plus size={20} className="group-hover:rotate-90 transition-transform duration-500" />
           Nouveau Projet
         </button>
       </header>
@@ -52,45 +50,52 @@ export default function Dashboard({ onNewProject, onSelectProject }: DashboardPr
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
           {projects.map((project) => (
             <motion.div
               key={project.id}
-              whileHover={{ y: -5 }}
-              className="glass-card p-6 cursor-pointer group"
+              whileHover={{ y: -8 }}
+              className="glass-card p-8 cursor-pointer group flex flex-col h-full"
               onClick={() => onSelectProject(project.id)}
             >
-              <div className="flex justify-between items-start mb-4">
-                <div className="p-3 bg-academic-100 rounded-xl text-accent group-hover:bg-accent group-hover:text-white transition-colors">
+              <div className="flex justify-between items-start mb-6">
+                <div className="w-14 h-14 bg-slate-50 rounded-2xl text-accent flex items-center justify-center group-hover:bg-academic-900 group-hover:text-white transition-all duration-500 shadow-inner">
                   <FileText size={24} />
                 </div>
-                <span className={`text-xs px-2 py-1 rounded-full ${
-                  project.status === 'completed' ? 'bg-green-100 text-green-700' :
-                  project.status === 'generating' ? 'bg-blue-100 text-blue-700' :
-                  'bg-gray-100 text-gray-700'
+                <span className={`text-[10px] uppercase tracking-widest px-3 py-1.5 rounded-full font-bold border ${
+                  project.status === 'completed' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' :
+                  project.status === 'generating' ? 'bg-amber-50 text-amber-700 border-amber-100' :
+                  'bg-slate-50 text-slate-600 border-slate-100'
                 }`}>
                   {project.status === 'completed' ? 'Terminé' :
-                   project.status === 'generating' ? 'En cours' :
-                   project.status === 'plan_validated' ? 'Plan validé' : 'Brouillon'}
+                   project.status === 'generating' ? 'Rédaction' :
+                   project.status === 'plan_validated' ? 'Plan Prêt' : 'Brouillon'}
                 </span>
               </div>
-              <h3 className="text-xl mb-2 line-clamp-2 h-14">{project.title}</h3>
-              <div className="flex items-center gap-4 text-sm text-gray-500 mb-6">
-                <div className="flex items-center gap-1">
-                  <Clock size={14} />
-                  {new Date(project.created_at).toLocaleDateString()}
+              
+              <h3 className="text-2xl mb-4 font-serif font-semibold text-academic-900 line-clamp-2 leading-tight flex-1">
+                {project.title}
+              </h3>
+              
+              <div className="flex items-center gap-6 text-xs font-bold uppercase tracking-widest text-slate-400 mb-8">
+                <div className="flex items-center gap-2">
+                  <Clock size={14} className="text-accent/60" />
+                  {new Date(project.created_at).toLocaleDateString('fr-FR', { month: 'short', day: 'numeric' })}
                 </div>
-                <div className="flex items-center gap-1">
-                  <BookOpen size={14} />
+                <div className="flex items-center gap-2">
+                  <BookOpen size={14} className="text-accent/60" />
                   {project.level}
                 </div>
               </div>
-              <div className="flex items-center justify-between pt-4 border-t border-gray-100">
-                <span className="text-accent font-medium flex items-center gap-1">
-                  Continuer <ChevronRight size={16} />
+              
+              <div className="flex items-center justify-between pt-6 border-t border-slate-50">
+                <span className="text-academic-900 font-bold text-sm uppercase tracking-widest flex items-center gap-2 group-hover:text-accent transition-colors">
+                  Ouvrir le projet <ChevronRight size={16} className="group-hover:translate-x-1 transition-transform" />
                 </span>
                 {project.status === 'completed' && (
-                  <Download size={18} className="text-gray-400 hover:text-academic-900" />
+                  <div className="w-10 h-10 rounded-full bg-slate-50 flex items-center justify-center text-slate-400 hover:text-academic-900 hover:bg-slate-100 transition-all">
+                    <Download size={18} />
+                  </div>
                 )}
               </div>
             </motion.div>
