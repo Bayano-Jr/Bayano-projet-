@@ -6,11 +6,11 @@
   --font-serif: "Cormorant Garamond", serif;
   --font-mono: "JetBrains Mono", monospace;
   
-  --color-academic-900: #0F172A;
-  --color-academic-800: #1E293B;
-  --color-academic-700: #334155;
-  --color-academic-100: #F8FAFC;
-  --color-accent: #B45309; /* Deep Amber/Gold */
+  --color-academic-900: #004F8C;
+  --color-academic-800: #003D6E;
+  --color-academic-700: #002B4F;
+  --color-academic-100: #F0F7FA;
+  --color-accent: #1B8543; /* Vibrant Green from logo */
   --color-paper: #FDFCFB;
 }
 
@@ -52,4 +52,37 @@
 .markdown-body ol { @apply list-decimal ml-8 mb-6 space-y-2; }
 .markdown-body li { @apply pl-2; }
 .markdown-body blockquote { @apply border-l-2 border-accent/30 pl-8 italic my-10 text-slate-600 font-serif; }
+
+.markdown-body table { @apply w-full mb-8 border-collapse border border-slate-200 text-base; }
+.markdown-body th { @apply bg-slate-50 border border-slate-200 px-4 py-3 font-semibold text-left; }
+.markdown-body td { @apply border border-slate-200 px-4 py-3; }
+.markdown-body tr:nth-child(even) { @apply bg-slate-50/50; }
+
+.word-content {
+  @apply font-serif text-academic-900 leading-relaxed;
+}
+
+.word-content p {
+  @apply mb-4 text-justify;
+}
+
+.word-content h1 {
+  @apply text-3xl font-bold mb-6 mt-10 text-center uppercase;
+}
+
+.word-content h2 {
+  @apply text-2xl font-bold mb-4 mt-8;
+}
+
+.word-content h3 {
+  @apply text-xl font-bold mb-3 mt-6;
+}
+
+.word-content ul {
+  @apply list-disc ml-8 mb-4;
+}
+
+.word-content ol {
+  @apply list-decimal ml-8 mb-4;
+}
 

@@ -1,20 +1,164 @@
 import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
-import { PlanStructure, Project } from "../types";
+import { PlanStructure, Project, AppSettings } from "../types";
+import { storageService } from "./storageService";
+import { logError } from "../utils/logger";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+let aiClient: GoogleGenAI | null = null;
+
+const getAiClient = (): GoogleGenAI => {
+  if (!aiClient) {
+    const key = process.env.GEMINI_API_KEY;
+    if (!key) {
+      throw new Error('GEMINI_API_KEY environment variable is required');
+    }
+    aiClient = new GoogleGenAI({ apiKey: key });
+  }
+  return aiClient;
+};
+
+const generateContentWithRetry = async (params: any, retries = 3, delayMs = 2000): Promise<GenerateContentResponse> => {
+  const ai = getAiClient();
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await ai.models.generateContent(params);
+    } catch (error: any) {
+      const isRateLimit = error?.status === 429 || error?.message?.includes('429') || error?.message?.includes('RESOURCE_EXHAUSTED') || error?.status === 'RESOURCE_EXHAUSTED';
+      
+      if (isRateLimit) {
+        if (i < retries - 1) {
+          console.warn(`Rate limit hit. Retrying in ${delayMs}ms... (Attempt ${i + 1}/${retries})`);
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+          delayMs *= 2; // Exponential backoff
+          continue;
+        } else {
+          throw new Error("Quota API dépassé (Erreur 429). Veuillez patienter quelques instants avant de réessayer ou vérifier votre forfait Google AI Studio.");
+        }
+      }
+      
+      // If it's not a rate limit error, or we've exhausted retries, throw
+      logError("Gemini API Error", error, { params });
+      throw error;
+    }
+  }
+  logError("Gemini API Error", new Error("Échec de la génération de contenu après plusieurs tentatives."));
+  throw new Error("Échec de la génération de contenu après plusieurs tentatives.");
+};
+
+const getModel = async (project?: Project) => {
+  if (project?.aiModel) return project.aiModel;
+  const settings = await storageService.getSettings();
+  return settings.aiModel || "gemini-3-flash-preview";
+};
+
+const getSystemInstruction = async () => {
+  const settings = await storageService.getSettings();
+  return settings.systemInstruction || "";
+};
+
+const extractJson = (text: string): any => {
+  try {
+    // Try direct parse first
+    return JSON.parse(text);
+  } catch (e) {
+    // Try to extract from markdown code blocks
+    const match = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (match && match[1]) {
+      try {
+        return JSON.parse(match[1]);
+      } catch (e2) {
+        console.error("Failed to parse extracted JSON:", e2);
+      }
+    }
+    
+    // Last resort: try to find anything that looks like a JSON object/array
+    const firstBrace = text.indexOf('{');
+    const lastBrace = text.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      try {
+        return JSON.parse(text.substring(firstBrace, lastBrace + 1));
+      } catch (e3) {
+        console.error("Failed to parse braced JSON:", e3);
+      }
+    }
+
+    const firstBracket = text.indexOf('[');
+    const lastBracket = text.lastIndexOf(']');
+    if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
+      try {
+        return JSON.parse(text.substring(firstBracket, lastBracket + 1));
+      } catch (e4) {
+        console.error("Failed to parse bracketed JSON:", e4);
+      }
+    }
+
+    throw new Error("Could not find valid JSON in response");
+  }
+};
 
 export const generatePlan = async (project: Partial<Project>): Promise<PlanStructure> => {
-  const prompt = `Génère un plan détaillé de mémoire académique pour le sujet suivant:
-  Sujet: ${project.title}
-  Filière: ${project.field}
-  Université: ${project.university}
-  Pays: ${project.country}
-  Niveau: ${project.level}
-  Norme bibliographique: ${project.norm}
-  Nombre minimum de pages: ${project.min_pages}
-  ${project.instructions ? `CONSIGNES PARTICULIÈRES: ${project.instructions}` : ''}
-  ${project.referenceText ? `EXEMPLE/MODÈLE À SUIVRE (Analyse attentivement la structure, le plan et le style de ce document pour t'en inspirer fidèlement): ${project.referenceText.substring(0, 50000)}` : ''}
+  if (project.documentType === 'tp' && project.generationMode === 'direct') {
+    return {
+      introduction: { titre: "Contexte et Objectifs", sections: [] },
+      chapitres: [
+        { titre: "Développement du Travail Pratique", sections: [] }
+      ],
+      conclusion_generale: "Synthèse",
+      annexes: [],
+      bibliographie_indicative: []
+    };
+  }
 
+  const suggestedChapters = Math.max(3, Math.ceil(project.min_pages! / 15));
+  const currentYear = new Date().getFullYear();
+
+  let docTypeStr = "mémoire académique";
+  let specificInstructions = "";
+
+  if (project.documentType === 'tp') {
+    docTypeStr = "Travail Pratique (TP)";
+    specificInstructions = `
+  IMPORTANT: Un Travail Pratique (TP) n'a pas de canevas fixe. Sa structure dépend ENTIÈREMENT du sujet proposé et des consignes de l'utilisateur.
+  - Adapte la structure au sujet exact (ça peut être une suite de questions/réponses, une analyse de cas, un rapport de laboratoire, un essai, un code commenté, etc.).
+  - Ne force pas une structure "Introduction / Développement / Conclusion" si le sujet demande autre chose (comme des exercices ou des parties spécifiques).
+  - Respecte scrupuleusement le nombre de pages demandé (${project.min_pages} pages). Ajuste le nombre de sections et sous-sections pour atteindre ce volume sans remplissage inutile.
+  - NE METS PAS D'ANNEXES. Les annexes sont interdites pour ce TP. Le tableau "annexes" dans le JSON DOIT être vide [].
+  - INCLURE UNE BIBLIOGRAPHIE INDICATIVE si le TP nécessite des recherches ou fait plus de 5 pages. Fais un effort d'inclure la bibliographie selon la taille du travail et des notes que tu as mises.
+  - Si l'utilisateur a fourni des consignes particulières, elles priment sur tout le reste.
+  
+  IMPORTANT POUR LE JSON DU TP:
+  - Utilise la clé "chapitres" pour lister les différentes parties, questions ou exercices du TP.
+  - L'introduction et la conclusion peuvent être très brèves ou optionnelles (tu peux les nommer "Introduction" ou "Préambule").
+  - Laisse "annexes" VIDE: [].
+    `;
+  } else if (project.documentType === 'article') {
+    docTypeStr = "Article scientifique / Article de revue";
+    specificInstructions = `
+  Le plan doit inclure:
+  1. Une "INTRODUCTION" (Contexte, Problématique, Objectifs).
+  2. Une section "MÉTHODOLOGIE".
+  3. Une section "RÉSULTATS / ANALYSE".
+  4. Une section "DISCUSSION".
+  5. Une "CONCLUSION".
+  6. Des "RÉFÉRENCES".
+    `;
+  } else if (project.documentType === 'rapport') {
+    docTypeStr = "Rapport de stage";
+    specificInstructions = `
+  Le plan doit inclure:
+  1. Une "INTRODUCTION" (Un seul point, sans aucun sous-point. Pas de problématique, pas d'hypothèse, pas d'annonce de plan).
+  2. Un chapitre "PRÉSENTATION DE LA STRUCTURE D'ACCUEIL".
+  3. Un chapitre "DÉROULEMENT DU STAGE ET ACTIVITÉS RÉALISÉES".
+  4. Un chapitre "DIFFICULTÉS RENCONTRÉES ET APPORTS DU STAGE".
+  5. Un chapitre "ANALYSE CRITIQUE".
+  6. Une "CONCLUSION" (Un seul point, sans aucun sous-point).
+  
+  IMPORTANT POUR LE RAPPORT DE STAGE:
+  - L'introduction DOIT avoir un tableau "sections" VIDE: [].
+  - NE METS PAS D'ANNEXES. Les annexes sont interdites pour ce rapport. Le tableau "annexes" dans le JSON DOIT être vide [].
+    `;
+  } else {
+    docTypeStr = "mémoire académique";
+    specificInstructions = `
   Le plan doit inclure:
   1. Une "INTRODUCTION GÉNÉRALE" (Première partie du travail) avec impérativement cette structure de sous-points:
      0.1. Objet du sujet
@@ -23,97 +167,210 @@ export const generatePlan = async (project: Partial<Project>): Promise<PlanStruc
      0.4. Méthodes et techniques (0.4.1. Méthodes: Historique, Descriptive, Analytique, etc. ; 0.4.2. Techniques: Documentaire, Interview, Enquête, etc.)
      0.5. Cadre théorique
      0.6. Choix et intérêt du sujet (Scientifique, Social et Personnel)
-     0.7. Délimitation du sujet (Spatiale et Temporelle)
+     0.7. Délimitation du sujet (Spatiale et Temporelle - ATTENTION: La délimitation temporelle doit s'étendre jusqu'à une période très récente, idéalement l'année en cours ${currentYear})
      0.8. Division du travail
-  2. Au moins 3 chapitres de corps du texte (Chapitre 1, Chapitre 2, etc.) richement structurés.
+  2. Au moins ${suggestedChapters} chapitres de corps du texte (Chapitre 1, Chapitre 2, etc.) richement structurés avec de nombreuses sections et sous-sections pour permettre d'atteindre les ${project.min_pages} pages.
+     ${project.methodology === 'empirical' ? `IMPORTANT: Puisque la méthodologie est EMPIRIQUE, le dernier chapitre de corps DOIT impérativement s'intituler "PRÉSENTATION, ANALYSE ET INTERPRÉTATION DES RÉSULTATS". Ce chapitre doit traiter de la population d'étude, de l'échantillon, des instruments de collecte (questionnaire/entretien) et de la présentation des résultats sous forme de tableaux. AJOUTE ÉGALEMENT "Questionnaire d'enquête" ou "Guide d'entretien" dans la liste des annexes.` : ''}
   3. Une conclusion générale.
   4. Une bibliographie indicative.
+  5. Des annexes pertinentes.
+    `;
+  }
+
+  const prompt = `Génère un plan détaillé de ${docTypeStr} pour le sujet suivant:
+  Sujet: ${project.title}
+  Filière: ${project.field}
+  Université: ${project.university}
+  Pays: ${project.country}
+  Niveau: ${project.level}
+  Langue: ${project.language || 'Français'}
+  Norme bibliographique: ${project.norm}
+  Nombre minimum de pages: ${project.min_pages}
+  ${project.instructions ? `CONSIGNES PARTICULIÈRES: ${project.instructions}` : ''}
+  ${project.referenceText ? `EXEMPLE/MODÈLE À SUIVRE (Analyse attentivement la structure, le plan et le style de ce document pour t'en inspirer fidèlement): ${project.referenceText.substring(0, 5000)}` : ''}
+
+  ${specificInstructions}
+
+  IMPORTANT: TOUT le contenu généré (titres, sous-titres, descriptions) DOIT être rédigé dans la langue suivante : ${project.language || 'Français'}. Adapte la terminologie académique à cette langue.
 
   Réponds UNIQUEMENT en format JSON structuré selon ce schéma:
   {
     "introduction": {
-      "titre": "INTRODUCTION GÉNÉRALE",
+      "titre": "INTRODUCTION",
       "sections": [
-        { "titre": "0.1. Objet du sujet", "sous_sections": [] },
-        { "titre": "0.2. Problématique", "sous_sections": [] },
-        { "titre": "0.3. Hypothèses", "sous_sections": [] },
-        { "titre": "0.4. Méthodes et techniques", "sous_sections": ["0.4.1. Méthodes", "0.4.2. Techniques"] },
-        { "titre": "0.5. Cadre théorique", "sous_sections": [] },
-        { "titre": "0.6. Choix et intérêt du sujet", "sous_sections": ["Scientifique", "Social", "Personnel"] },
-        { "titre": "0.7. Délimitation du sujet", "sous_sections": ["Spatiale", "Temporelle"] },
-        { "titre": "0.8. Division du travail", "sous_sections": [] }
+        { "titre": "...", "sous_sections": [] }
       ]
     },
     "chapitres": [
       {
-        "titre": "Chapitre 1: ...",
+        "titre": "...",
         "sections": [
           { "titre": "...", "sous_sections": ["..."] }
         ]
       }
     ],
     "conclusion_generale": "string",
+    "annexes": ["string"],
     "bibliographie_indicative": ["string"]
   }`;
 
-  const response = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
+  const response = await generateContentWithRetry({
+    model: await getModel(project as Project),
     contents: prompt,
     config: {
+      systemInstruction: await getSystemInstruction(),
       responseMimeType: "application/json",
     },
   });
 
-  return JSON.parse(response.text || "{}");
+  const defaultPlan: PlanStructure = {
+    introduction: { titre: "INTRODUCTION GÉNÉRALE", sections: [] },
+    chapitres: [],
+    conclusion_generale: "",
+    bibliographie_indicative: [],
+    annexes: []
+  };
+
+  try {
+    const parsed = extractJson(response.text || "{}");
+    return {
+      ...defaultPlan,
+      ...parsed,
+      introduction: { ...defaultPlan.introduction, ...(parsed.introduction || {}) },
+      chapitres: Array.isArray(parsed.chapitres) ? parsed.chapitres : [],
+      bibliographie_indicative: Array.isArray(parsed.bibliographie_indicative) ? parsed.bibliographie_indicative : [],
+      annexes: Array.isArray(parsed.annexes) ? parsed.annexes : []
+    };
+  } catch (error) {
+    console.error("Failed to parse plan JSON:", error);
+    logError("Failed to parse plan JSON", error, { responseText: response.text });
+    return defaultPlan;
+  }
 };
 
 export const generateChapterContent = async (
   project: Project,
   plan: PlanStructure,
   chapterTitle: string,
-  previousContext: string = ""
+  previousContext: string = "",
+  targetWords: number = 2000
 ): Promise<string> => {
-  const prompt = `Tu es un expert académique. Rédige le contenu complet du chapitre suivant pour un mémoire de ${project.level}.
+  const isResultsChapter = chapterTitle.toUpperCase().includes("PRÉSENTATION") && chapterTitle.toUpperCase().includes("RÉSULTATS");
+  const isIntroduction = chapterTitle.toUpperCase().includes("INTRODUCTION");
+  const isConclusion = chapterTitle.toUpperCase().includes("CONCLUSION");
+  const isBibliography = chapterTitle.toUpperCase().includes("BIBLIOGRAPHIE");
+  const isAnnexes = chapterTitle.toUpperCase().includes("ANNEXE");
+  
+  const shouldHaveFootnotes = project.documentType !== 'rapport' && !isConclusion && !isBibliography && !isAnnexes;
+  const currentYear = new Date().getFullYear();
+
+  let docTypeStr = "mémoire académique";
+  let specificInstructions = "";
+
+  if (project.documentType === 'tp') {
+    docTypeStr = "Travail Pratique (TP)";
+    specificInstructions = `
+  CONSIGNES SPÉCIFIQUES POUR UN TP :
+  - Un TP n'a pas de forme fixe, adapte-toi strictement au sujet et aux consignes de l'utilisateur.
+  - Le contenu doit être direct, pertinent et répondre exactement à ce qui est demandé.
+  - Fais un effort particulier pour respecter le volume attendu (environ ${targetWords} mots pour cette partie) afin d'atteindre le nombre de pages global demandé par l'utilisateur.
+  - Ne pas utiliser un style trop pompeux comme pour une thèse, reste pratique et concret.
+  - Aucune annexe ne doit être générée ou mentionnée.
+  ${project.generationMode === 'direct' ? "- MODE DIRECT: Réponds simplement et directement aux consignes ou au prompt donné, sans chercher à structurer de manière académique complexe." : ""}
+    `;
+  } else if (project.documentType === 'article') {
+    docTypeStr = "Article scientifique / de revue";
+  } else if (project.documentType === 'rapport') {
+    docTypeStr = "Rapport de stage";
+    specificInstructions = `
+  CONSIGNES SPÉCIFIQUES POUR UN RAPPORT DE STAGE :
+  - NE PAS inclure de bibliographie.
+  - NE PAS inclure de notes de bas de page.
+  - Le style doit être professionnel, descriptif et analytique, ancré dans la réalité de l'entreprise.
+  - L'introduction doit être courte (1 à 2 pages maximum, soit environ 300 à 600 mots). Elle ne doit PAS contenir de sous-points, de problématique, d'hypothèse ou d'annonce de plan.
+  - La conclusion doit être courte (1 à 2 pages maximum).
+  - Aucune annexe ne doit être générée.
+    `;
+  }
+
+  const prompt = `Tu es un expert académique. Rédige le contenu complet de la section suivante pour un ${docTypeStr} de niveau ${project.level}.
   
   CONTEXTE DU PROJET:
   Sujet: ${project.title}
   Filière: ${project.field}
   Norme: ${project.norm}
+  Langue: ${project.language || 'Français'}
+  Méthodologie: ${project.methodology === 'empirical' ? 'EMPIRIQUE (Enquête de terrain)' : 'CLASSIQUE (Théorique)'}
   Plan complet: ${JSON.stringify(plan)}
   
-  CHAPITRE À RÉDIGER: ${chapterTitle}
+  SECTION À RÉDIGER: ${chapterTitle}
   
-  CONTEXTE PRÉCÉDENT (Résumé des chapitres déjà rédigés):
+  CONTEXTE PRÉCÉDENT (Résumé des sections déjà rédigées):
   ${previousContext}
   
-  CONSIGNES:
+  CONSIGNES GÉNÉRALES:
   - Style académique soutenu, rigoureux et professionnel.
-  - Développe en profondeur chaque section et sous-section mentionnée dans le plan pour ce chapitre.
-  - S'il s'agit de l'INTRODUCTION GÉNÉRALE, respecte scrupuleusement la numérotation des sous-points (0.1, 0.2, etc.) demandée dans le plan.
+  - Développe en profondeur chaque sous-section mentionnée dans le plan pour cette partie.
+  - S'il s'agit de l'INTRODUCTION, respecte scrupuleusement la numérotation des sous-points demandée dans le plan.
   - Inclus des débats doctrinaux, des théories comparées et des analyses critiques.
   - Adapte le contenu au contexte local (${project.country}) si pertinent.
+  - IMPORTANT (DATES ET RÉFÉRENCES) : Les délimitations temporelles du sujet doivent s'étendre jusqu'à une période très récente (idéalement jusqu'à l'année en cours, ${currentYear}). De même, si tu cites des sites web dans les notes de bas de page ou la bibliographie, la "date de consultation" doit être de l'année en cours (${currentYear}).
   - Utilise des citations réelles ou réalistes respectant la norme ${project.norm}.
-  - IMPORTANT: Utilise des NOTES DE BAS DE PAGE pour citer les auteurs ou apporter des précisions importantes.
-  - Format des notes: Utilise la syntaxe Markdown standard [^1] dans le texte et définit la note à la fin du texte avec [^1]: Contenu de la note.
-  - Les notes doivent être pertinentes et non excessives.
-  - Le contenu doit être très long et détaillé pour atteindre l'objectif de 60 pages au total.
-  - Vise environ 3000 à 4000 mots pour ce chapitre.
+  ${shouldHaveFootnotes ? `- IMPORTANT (NOTES DE BAS DE PAGE ET RÉFÉRENCES) : 
+    1. Tu DOIS générer un TRÈS GRAND NOMBRE de notes de bas de page (au moins 10 à 15 par chapitre). C'est une exigence académique stricte.
+    2. Insère une note de bas de page à CHAQUE FOIS que tu cites un auteur, un chiffre, une donnée sensible, une statistique, une définition technique, une théorie importante ou un fait historique.
+    3. Utilise STRICTEMENT la norme bibliographique sélectionnée : ${project.norm}.
+    4. La numérotation des notes doit être séquentielle, claire et commencer à 1 pour chaque chapitre. Utilise la syntaxe Markdown standard : place [^1], [^2], etc. EXACTEMENT à l'endroit de la citation dans le texte, juste après le mot ou la phrase concernée.
+       Exemple dans le texte : "Selon Bourdieu, la reproduction sociale est un mécanisme clé [^1]."
+    5. Définis TOUTES les notes de bas de page à la toute fin du texte généré, en utilisant le format : 
+       [^1]: Nom de l'auteur, Titre de l'ouvrage, Éditeur, Année, Page. (formaté selon la norme ${project.norm})
+    6. ASSURE-TOI qu'il n'y a aucune confusion : la note [^X] à la fin du texte doit correspondre EXACTEMENT à l'appel de note [^X] dans le texte, et citer le bon auteur ou la bonne source. Ne mélange pas les références.` : `- INTERDICTION STRICTE DE NOTES DE BAS DE PAGE : Ne génère AUCUNE note de bas de page dans cette section (${chapterTitle}).`}
+  ${isIntroduction || isConclusion ? `- INTERDICTION STRICTE DE TABLEAUX : Ne génère AUCUN tableau dans cette section (${isIntroduction ? "l'introduction" : "la conclusion"}). Les tableaux sont strictement réservés au développement du travail.` : `- IMPORTANT (TABLEAUX) : Intègre de VRAIS tableaux Markdown bien formatés (avec les balises | et -) pour présenter des données, des comparaisons ou des statistiques. N'utilise pas d'autres signes ou balises HTML.`}
+  - Le contenu doit être extrêmement riche, détaillé et exhaustif.
+  - Vise STRICTEMENT environ ${targetWords} mots pour cette section. C'est CRUCIAL pour atteindre l'objectif global de ${project.min_pages} pages pour le document complet. Ne sois ni trop court ni trop long.
+  - Développe chaque point avec des exemples, des analyses, des citations et des arguments solides. Ne sois pas superficiel.
+  - Assure une transition fluide entre les sous-sections.
+
+  ${specificInstructions}
+
+  ${isResultsChapter && project.methodology === 'empirical' ? `
+  CONSIGNES SPÉCIFIQUES POUR LE CHAPITRE DE RÉSULTATS:
+  1. Présente d'abord la population d'étude et l'échantillon (donne des chiffres précis, ex: 50 ou 100 personnes).
+  2. Décris l'instrument de collecte (Questionnaire d'enquête ou Guide d'entretien).
+  3. Présente la technique de dépouillement (Fréquences et pourcentages).
+  4. GÉNÈRE ET PRÉSENTE ENTRE 10 ET 15 TABLEAUX STATISTIQUES.
+  5. Chaque tableau doit suivre ce format Markdown:
+     ### Tableau X : [Titre du tableau]
+     | [Critère/Réponse] | Effectif | Pourcentage |
+     | :--- | :---: | :---: |
+     | ... | ... | ... |
+     | **Total** | **X** | **100 %** |
+     
+     **Commentaire :**
+     [Analyse détaillée du tableau mettant en évidence les tendances majeures, les corrélations et l'interprétation académique des résultats en lien avec les hypothèses].
+  6. Assure-toi que les données dans les tableaux sont cohérentes entre elles et avec le sujet.
+  7. Termine par une interprétation globale des résultats confrontant les données empiriques aux objectifs et hypothèses du travail.
+  ` : ''}
   
   Rédige directement le texte du chapitre en Markdown.`;
 
-  const response = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
+  const response = await generateContentWithRetry({
+    model: await getModel(project),
     contents: prompt,
+    config: {
+      systemInstruction: await getSystemInstruction(),
+    },
   });
 
   return response.text || "";
 };
 
 export const generateFrontMatter = async (project: Project): Promise<any> => {
-  const prompt = `Génère les éléments techniques suivants pour le mémoire:
+  const prompt = `Génère les éléments techniques suivants pour le document:
   Sujet: ${project.title}
   Filière: ${project.field}
   Université: ${project.university}
+  Langue: ${project.language || 'Français'}
   
   Éléments requis:
   1. Page de garde
@@ -122,6 +379,8 @@ export const generateFrontMatter = async (project: Project): Promise<any> => {
   4. Résumé (Français)
   5. Abstract (Anglais)
   6. Liste des sigles
+  
+  IMPORTANT: Rédige ces éléments dans la langue du document (${project.language || 'Français'}).
   
   Réponds en JSON:
   {
@@ -133,15 +392,31 @@ export const generateFrontMatter = async (project: Project): Promise<any> => {
     "sigles": ["string"]
   }`;
 
-  const response = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
+  const response = await generateContentWithRetry({
+    model: await getModel(project),
     contents: prompt,
     config: {
+      systemInstruction: await getSystemInstruction(),
       responseMimeType: "application/json",
     },
   });
 
-  return JSON.parse(response.text || "{}");
+  const defaultFrontMatter = {
+    page_de_garde: "",
+    dedicace: "",
+    remerciements: "",
+    resume_fr: "",
+    abstract_en: "",
+    sigles: []
+  };
+
+  try {
+    const parsed = extractJson(response.text || "{}");
+    return { ...defaultFrontMatter, ...parsed };
+  } catch (error) {
+    console.error("Failed to parse front matter JSON:", error);
+    return defaultFrontMatter;
+  }
 };
 
 export const refineContent = async (
@@ -149,10 +424,11 @@ export const refineContent = async (
   currentContent: string,
   instruction: string
 ): Promise<string> => {
-  const prompt = `Tu es un expert académique. Tu dois modifier le texte suivant d'un mémoire en suivant les instructions de l'utilisateur.
+  const prompt = `Tu es un expert académique. Tu dois modifier le texte suivant d'un document en suivant les instructions de l'utilisateur.
   
-  SUJET DU MÉMOIRE: ${project.title}
+  SUJET DU DOCUMENT: ${project.title}
   FILIÈRE: ${project.field}
+  LANGUE: ${project.language || 'Français'}
   
   TEXTE ACTUEL:
   ---
@@ -163,13 +439,17 @@ export const refineContent = async (
   ${instruction}
   
   CONSIGNES:
+  - Rédige tes modifications dans la langue du document (${project.language || 'Français'}).
   - Garde un style académique rigoureux.
   - Ne réponds QUE par le nouveau texte complet (pas de commentaires).
   - Respecte le format Markdown.`;
 
-  const response = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
+  const response = await generateContentWithRetry({
+    model: await getModel(project),
     contents: prompt,
+    config: {
+      systemInstruction: await getSystemInstruction(),
+    },
   });
 
   return response.text || currentContent;
@@ -180,10 +460,11 @@ export const refinePlan = async (
   currentPlan: PlanStructure,
   instruction: string
 ): Promise<PlanStructure> => {
-  const prompt = `Tu es un expert académique. Tu dois modifier le plan de mémoire suivant en suivant les instructions de l'utilisateur.
+  const prompt = `Tu es un expert académique. Tu dois modifier le plan de document suivant en suivant les instructions de l'utilisateur.
   
-  SUJET DU MÉMOIRE: ${project.title}
+  SUJET DU DOCUMENT: ${project.title}
   FILIÈRE: ${project.field}
+  LANGUE: ${project.language || 'Français'}
   
   PLAN ACTUEL:
   ${JSON.stringify(currentPlan, null, 2)}
@@ -192,21 +473,84 @@ export const refinePlan = async (
   ${instruction}
   
   CONSIGNES:
+  - Rédige tes modifications dans la langue du document (${project.language || 'Français'}).
   - Respecte scrupuleusement le format JSON.
   - Garde la structure de l'introduction (0.1 à 0.8) intacte sauf si l'instruction demande spécifiquement de la modifier.
   - Réponds UNIQUEMENT par le nouveau JSON complet.`;
 
-  const response = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
+  const response = await generateContentWithRetry({
+    model: await getModel(project),
     contents: prompt,
     config: {
+      systemInstruction: await getSystemInstruction(),
       responseMimeType: "application/json",
     },
   });
 
   try {
-    return JSON.parse(response.text || "{}");
-  } catch {
+    const parsed = extractJson(response.text || "{}");
+    return parsed;
+  } catch (error) {
+    console.error("Failed to parse refined plan JSON:", error);
     return currentPlan;
+  }
+};
+
+export const detectAIContent = async (text: string): Promise<{ aiProbability: number, humanProbability: number }> => {
+  const prompt = `En tant qu'expert en linguistique computationnelle et détection de contenu généré par l'IA, analyse le texte suivant et détermine la probabilité qu'il ait été généré par une intelligence artificielle (comme ChatGPT, Claude, Gemini, etc.) par rapport à un humain.
+
+TEXTE À ANALYSER:
+---
+${text.substring(0, 10000)} // Limite à 10000 caractères pour l'analyse
+---
+
+Réponds UNIQUEMENT avec un objet JSON contenant deux propriétés : "aiProbability" (un nombre entre 0 et 100 représentant le pourcentage de probabilité que ce soit de l'IA) et "humanProbability" (un nombre entre 0 et 100 représentant le pourcentage de probabilité que ce soit humain). La somme des deux doit faire 100.`;
+
+  try {
+    const response = await generateContentWithRetry({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+      },
+    });
+
+    const result = extractJson(response.text || "{}");
+    return {
+      aiProbability: result.aiProbability || 0,
+      humanProbability: result.humanProbability || 100
+    };
+  } catch (error) {
+    console.error("Error detecting AI content:", error);
+    return { aiProbability: 0, humanProbability: 100 };
+  }
+};
+
+export const paraphraseText = async (text: string, language: string = 'fr'): Promise<string> => {
+  const prompt = `Tu es un expert en rédaction académique et en reformulation. Ta tâche est de paraphraser le texte suivant pour qu'il paraisse totalement naturel, humain, et qu'il passe les détecteurs d'IA (comme Turnitin, Compilatio, etc.) tout en conservant EXACTEMENT le même sens, les mêmes arguments et le même niveau académique.
+
+TEXTE ORIGINAL:
+---
+${text}
+---
+
+CONSIGNES DE PARAPHRASE:
+1. Modifie la structure des phrases (voix active/passive, inversion, etc.).
+2. Utilise des synonymes pertinents et un vocabulaire riche mais naturel.
+3. Varie la longueur des phrases pour imiter le rythme d'écriture humain (burstiness).
+4. Évite les tournures typiques de l'IA (ex: "Il est important de noter que", "En conclusion", "Dans le paysage actuel").
+5. La langue de sortie doit être: ${language === 'en' ? 'Anglais' : 'Français'}.
+6. Ne réponds QUE par le texte paraphrasé, sans aucun commentaire avant ou après.`;
+
+  try {
+    const response = await generateContentWithRetry({
+      model: "gemini-3.1-pro-preview", // Use Pro for better paraphrasing quality
+      contents: prompt,
+    });
+
+    return response.text || text;
+  } catch (error: any) {
+    console.error("Error paraphrasing text:", error);
+    throw new Error(error.message || "Échec de la paraphrase du texte");
   }
 };

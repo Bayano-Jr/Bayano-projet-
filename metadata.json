@@ -1,5 +1,5 @@
 {
   "name": "Bayano Académie",
   "description": "Plateforme académique d'excellence pour la rédaction de mémoires assistée par IA.",
-  "requestFramePermissions": []
+  "requestFramePermissions": ["microphone"]
 }
