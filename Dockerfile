@@ -1,4 +1,4 @@
-FROM node:22-alpine
+FROM node:22-slim
 
 WORKDIR /app
 
@@ -18,6 +18,7 @@ RUN npm run build
 EXPOSE 3000
 
 ENV NODE_ENV=production
+ENV NODE_OPTIONS="--experimental-strip-types"
 
 # Start the server
 CMD ["npm", "start"]
