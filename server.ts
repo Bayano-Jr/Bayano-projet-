@@ -1,8 +1,8 @@
 import express from "express";
 import session from "express-session";
-import SQLiteStore from "better-sqlite3-session-store";
+import pgSession from "connect-pg-simple";
 import bcrypt from "bcryptjs";
-import Database from "better-sqlite3";
+import { Pool } from "pg";
 import cors from "cors";
 import { createServer as createViteServer } from "vite";
 import path from "path";
@@ -22,13 +22,47 @@ declare module "express-session" {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const dbPath = process.env.DB_PATH || "database.sqlite";
-const db = new Database(dbPath);
-db.pragma('foreign_keys = ON');
-db.pragma('journal_mode = WAL');
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+});
+
+const db = {
+  query: async (sql, params = []) => {
+    let i = 1;
+    const pgSql = sql.replace(/\?/g, () => `${i++}`);
+    return pool.query(pgSql, params);
+  },
+  get: async (sql, ...params) => {
+    const res = await db.query(sql, params);
+    return res.rows[0];
+  },
+  all: async (sql, ...params) => {
+    const res = await db.query(sql, params);
+    return res.rows;
+  },
+  run: async (sql, ...params) => {
+    await db.query(sql, params);
+  },
+  exec: async (sql) => {
+    await pool.query(sql);
+  },
+  prepare: (sql) => {
+    return {
+      run: async (...params) => {
+        await db.query(sql, params);
+      }
+    };
+  }
+};
+
+
 
 // Initialize database
-db.exec(`
+(async () => {
+  try {
+    await db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     email TEXT UNIQUE,
@@ -36,11 +70,11 @@ db.exec(`
     name TEXT,
     google_id TEXT UNIQUE,
     two_factor_secret TEXT,
-    two_factor_enabled INTEGER DEFAULT 0,
+    two_factor_enabled SMALLINT DEFAULT 0,
     plan TEXT DEFAULT 'free',
     credits INTEGER DEFAULT 30,
-    subscription_expires_at DATETIME,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    subscription_expires_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     status TEXT DEFAULT 'active'
   );
 
@@ -50,7 +84,7 @@ db.exec(`
     type TEXT, -- 'subscription', 'pack', 'usage'
     amount INTEGER, -- credits added or removed
     description TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 
@@ -74,7 +108,7 @@ db.exec(`
     plan TEXT,
     status TEXT,
     docx_data TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 
@@ -93,7 +127,7 @@ db.exec(`
     user_id TEXT,
     title TEXT,
     messages TEXT,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 
@@ -108,40 +142,44 @@ db.exec(`
     error_message TEXT,
     error_stack TEXT,
     context TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
 
   CREATE TABLE IF NOT EXISTS temp_login_tokens (
     token TEXT PRIMARY KEY,
     user_id TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
 
   CREATE TABLE IF NOT EXISTS password_resets (
     email TEXT PRIMARY KEY,
     token TEXT,
-    expires_at DATETIME
+    expires_at TIMESTAMP
   );
 `);
 
 // Migrations
 try {
-  db.prepare("ALTER TABLE projects ADD COLUMN docx_data TEXT").run();
+  await db.run("ALTER TABLE projects ADD COLUMN docx_data TEXT");
 } catch (e) {
   // Column might already exist
 }
 
 try {
-  db.prepare("ALTER TABLE users ADD COLUMN plan TEXT DEFAULT 'free'").run();
-  db.prepare("ALTER TABLE users ADD COLUMN credits INTEGER DEFAULT 30").run();
-  db.prepare("ALTER TABLE users ADD COLUMN subscription_expires_at DATETIME").run();
+  await db.run("ALTER TABLE users ADD COLUMN plan TEXT DEFAULT 'free'");
+  await db.run("ALTER TABLE users ADD COLUMN credits INTEGER DEFAULT 30");
+  await db.run("ALTER TABLE users ADD COLUMN subscription_expires_at TIMESTAMP");
 } catch (e) {
   // Columns might already exist
 }
+  } catch (err) {
+    console.error("DB Init Error:", err);
+  }
+})();
 
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT || 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.set("trust proxy", true);
 
@@ -156,13 +194,13 @@ async function startServer() {
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-  app.get("/api/health", (req, res) => {
+  app.get("/api/health", async (req, res) => {
     res.json({ status: "ok" });
   });
 
   // Add status column if it doesn't exist
 try {
-  db.prepare("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'").run();
+  await db.run("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'");
 } catch (e) {
   // Column might already exist
 }
@@ -178,20 +216,20 @@ const missingColumns = [
 
 for (const col of missingColumns) {
   try {
-    db.prepare(`ALTER TABLE projects ADD COLUMN ${col}`).run();
+    await db.run(`ALTER TABLE projects ADD COLUMN ${col}`);
   } catch (e) {
     // Column might already exist
   }
 }
 
-const SqliteStore = SQLiteStore(session);
-  const sessionStore = new SqliteStore({
-    client: db,
-    expired: {
-      clear: true,
-      intervalMs: 900000 // 15 minutes
-    }
-  });
+
+const PgStore = pgSession(session);
+const sessionStore = new PgStore({
+  pool: pool,
+  tableName: 'session',
+  createTableIfMissing: true
+});
+
 
   app.use(session({
     name: 'bayano_sid_v4',
@@ -267,8 +305,7 @@ const SqliteStore = SQLiteStore(session);
       const hashedPassword = await bcrypt.hash(password, 10);
       const id = Math.random().toString(36).substring(7);
       
-      const stmt = db.prepare("INSERT INTO users (id, email, password, name) VALUES (?, ?, ?, ?)");
-      stmt.run(id, email, hashedPassword, name);
+      await db.run("INSERT INTO users (id, email, password, name) VALUES (?, ?, ?, ?)", id, email, hashedPassword, name);
       
       const userId = id;
       const userEmail = email;
@@ -297,7 +334,7 @@ const SqliteStore = SQLiteStore(session);
 
   app.post("/api/auth/login", async (req, res) => {
     const { email, password } = req.body;
-    const user: any = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
+    const user: any = await db.get("SELECT * FROM users WHERE email = ?", email);
 
     if (user && user.password && await bcrypt.compare(password, user.password)) {
       if (user.two_factor_enabled) {
@@ -332,7 +369,7 @@ const SqliteStore = SQLiteStore(session);
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: "L'email est requis" });
 
-    const user: any = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
+    const user: any = await db.get("SELECT * FROM users WHERE email = ?", email);
     if (!user) {
       return res.status(404).json({ error: "Aucun compte associé à cet email." });
     }
@@ -340,7 +377,7 @@ const SqliteStore = SQLiteStore(session);
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 minutes
 
-    db.prepare("INSERT OR REPLACE INTO password_resets (email, token, expires_at) VALUES (?, ?, ?)").run(email, otpCode, expiresAt);
+    await db.run("INSERT INTO password_resets (email, token, expires_at) VALUES (?, ?, ?) ON CONFLICT (email) DO UPDATE SET token = EXCLUDED.token, expires_at = EXCLUDED.expires_at", email, otpCode, expiresAt);
 
     console.log(`[Auth] Code OTP pour ${email}: ${otpCode}`);
     
@@ -355,21 +392,21 @@ const SqliteStore = SQLiteStore(session);
     const { email, code } = req.body;
     if (!email || !code) return res.status(400).json({ error: "Email et code requis" });
 
-    const resetRecord: any = db.prepare("SELECT * FROM password_resets WHERE email = ? AND token = ?").get(email, code);
+    const resetRecord: any = await db.get("SELECT * FROM password_resets WHERE email = ? AND token = ?", email, code);
     
     if (!resetRecord) {
       return res.status(400).json({ error: "Code invalide ou expiré" });
     }
 
     if (new Date(resetRecord.expires_at) < new Date()) {
-      db.prepare("DELETE FROM password_resets WHERE email = ?").run(email);
+      await db.run("DELETE FROM password_resets WHERE email = ?", email);
       return res.status(400).json({ error: "Ce code a expiré." });
     }
 
-    const user: any = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
+    const user: any = await db.get("SELECT * FROM users WHERE email = ?", email);
     if (!user) return res.status(404).json({ error: "Utilisateur non trouvé" });
 
-    db.prepare("DELETE FROM password_resets WHERE email = ?").run(email);
+    await db.run("DELETE FROM password_resets WHERE email = ?", email);
 
     if (user.two_factor_enabled) {
       req.session.tempUserId = user.id;
@@ -400,7 +437,7 @@ const SqliteStore = SQLiteStore(session);
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: "L'email est requis" });
 
-    const user: any = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
+    const user: any = await db.get("SELECT * FROM users WHERE email = ?", email);
     if (!user) {
       // Pour des raisons de sécurité, on renvoie un succès même si l'email n'existe pas
       return res.json({ success: true, message: "Si cet email existe, un code de réinitialisation a été envoyé." });
@@ -411,7 +448,7 @@ const SqliteStore = SQLiteStore(session);
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 minutes
 
     // Sauvegarder dans la base de données
-    db.prepare("INSERT OR REPLACE INTO password_resets (email, token, expires_at) VALUES (?, ?, ?)").run(email, resetCode, expiresAt);
+    await db.run("INSERT INTO password_resets (email, token, expires_at) VALUES (?, ?, ?) ON CONFLICT (email) DO UPDATE SET token = EXCLUDED.token, expires_at = EXCLUDED.expires_at", email, resetCode, expiresAt);
 
     console.log(`[Auth] Code de réinitialisation pour ${email}: ${resetCode}`);
     
@@ -430,21 +467,21 @@ const SqliteStore = SQLiteStore(session);
       return res.status(400).json({ error: "Tous les champs sont requis" });
     }
 
-    const resetRecord: any = db.prepare("SELECT * FROM password_resets WHERE email = ? AND token = ?").get(email, code);
+    const resetRecord: any = await db.get("SELECT * FROM password_resets WHERE email = ? AND token = ?", email, code);
     
     if (!resetRecord) {
       return res.status(400).json({ error: "Code invalide ou expiré" });
     }
 
     if (new Date(resetRecord.expires_at) < new Date()) {
-      db.prepare("DELETE FROM password_resets WHERE email = ?").run(email);
+      await db.run("DELETE FROM password_resets WHERE email = ?", email);
       return res.status(400).json({ error: "Ce code a expiré. Veuillez refaire une demande." });
     }
 
     try {
       const hashedPassword = await bcrypt.hash(newPassword, 10);
-      db.prepare("UPDATE users SET password = ? WHERE email = ?").run(hashedPassword, email);
-      db.prepare("DELETE FROM password_resets WHERE email = ?").run(email);
+      await db.run("UPDATE users SET password = ? WHERE email = ?", hashedPassword, email);
+      await db.run("DELETE FROM password_resets WHERE email = ?", email);
       
       res.json({ success: true, message: "Mot de passe réinitialisé avec succès" });
     } catch (error) {
@@ -452,7 +489,7 @@ const SqliteStore = SQLiteStore(session);
     }
   });
 
-  app.post("/api/auth/2fa/verify-login", (req, res) => {
+  app.post("/api/auth/2fa/verify-login", async (req, res) => {
     const { token } = req.body;
     const tempUserId = req.session.tempUserId;
 
@@ -460,7 +497,7 @@ const SqliteStore = SQLiteStore(session);
       return res.status(401).json({ error: "Session expirée ou invalide" });
     }
 
-    const user: any = db.prepare("SELECT * FROM users WHERE id = ?").get(tempUserId);
+    const user: any = await db.get("SELECT * FROM users WHERE id = ?", tempUserId);
     if (!user) return res.status(404).json({ error: "Utilisateur non trouvé" });
 
     const verified = speakeasy.totp.verify({
@@ -494,20 +531,20 @@ const SqliteStore = SQLiteStore(session);
   });
 
   app.post("/api/auth/2fa/setup", requireAuth, async (req, res) => {
-    const user: any = db.prepare("SELECT * FROM users WHERE id = ?").get(req.session.userId);
+    const user: any = await db.get("SELECT * FROM users WHERE id = ?", req.session.userId);
     if (!user) return res.status(404).json({ error: "Utilisateur non trouvé" });
 
     const secret = speakeasy.generateSecret({ name: `Bayano Académie (${user.email})` });
     
-    db.prepare("UPDATE users SET two_factor_secret = ? WHERE id = ?").run(secret.base32, user.id);
+    await db.run("UPDATE users SET two_factor_secret = ? WHERE id = ?", secret.base32, user.id);
 
     const qrCodeUrl = await QRCode.toDataURL(secret.otpauth_url!);
     res.json({ qrCodeUrl, secret: secret.base32 });
   });
 
-  app.post("/api/auth/2fa/enable", requireAuth, (req, res) => {
+  app.post("/api/auth/2fa/enable", requireAuth, async (req, res) => {
     const { token } = req.body;
-    const user: any = db.prepare("SELECT * FROM users WHERE id = ?").get(req.session.userId);
+    const user: any = await db.get("SELECT * FROM users WHERE id = ?", req.session.userId);
     
     if (!user || !user.two_factor_secret) {
       return res.status(400).json({ error: "Configuration 2FA non initialisée" });
@@ -520,19 +557,19 @@ const SqliteStore = SQLiteStore(session);
     });
 
     if (verified) {
-      db.prepare("UPDATE users SET two_factor_enabled = 1 WHERE id = ?").run(user.id);
+      await db.run("UPDATE users SET two_factor_enabled = 1 WHERE id = ?", user.id);
       res.json({ success: true });
     } else {
       res.status(400).json({ error: "Code de vérification invalide" });
     }
   });
 
-  app.post("/api/auth/2fa/disable", requireAuth, (req, res) => {
-    db.prepare("UPDATE users SET two_factor_enabled = 0, two_factor_secret = NULL WHERE id = ?").run(req.session.userId);
+  app.post("/api/auth/2fa/disable", requireAuth, async (req, res) => {
+    await db.run("UPDATE users SET two_factor_enabled = 0, two_factor_secret = NULL WHERE id = ?", req.session.userId);
     res.json({ success: true });
   });
 
-  app.post("/api/auth/logout", (req, res) => {
+  app.post("/api/auth/logout", async (req, res) => {
     req.session.destroy(() => {
       res.clearCookie("bayano.sid", {
         secure: true,
@@ -545,23 +582,23 @@ const SqliteStore = SQLiteStore(session);
 
 
 
-  app.get("/api/auth/token-login", (req, res) => {
+  app.get("/api/auth/token-login", async (req, res) => {
     const { token } = req.query;
     if (!token) return res.status(400).json({ error: "Jeton manquant" });
 
-    const row: any = db.prepare("SELECT user_id FROM temp_login_tokens WHERE token = ? AND created_at > datetime('now', '-5 minutes')").get(token);
+    const row: any = await db.get("SELECT user_id FROM temp_login_tokens WHERE token = ? AND created_at > datetime('now', '-5 minutes')", token);
     
     if (row) {
       // Clean up token
-      db.prepare("DELETE FROM temp_login_tokens WHERE token = ?").run(token);
+      await db.run("DELETE FROM temp_login_tokens WHERE token = ?", token);
       
       const userId = row.user_id;
       req.session.regenerate((err) => {
         if (err) return res.status(500).json({ error: "Erreur de session" });
         req.session.userId = userId;
-        req.session.save((err) => {
+        req.session.save(async (err) => {
           if (err) return res.status(500).json({ error: "Erreur de session" });
-      const user: any = db.prepare("SELECT id, email, name, plan, credits, subscription_expires_at FROM users WHERE id = ?").get(userId);
+      const user: any = await db.get("SELECT id, email, name, plan, credits, subscription_expires_at FROM users WHERE id = ?", userId);
           res.json({ user, sessionId: req.sessionID });
         });
       });
@@ -570,10 +607,10 @@ const SqliteStore = SQLiteStore(session);
     }
   });
 
-  app.get("/api/auth/me", (req, res) => {
+  app.get("/api/auth/me", async (req, res) => {
     console.log(`[AuthMe] SessionID: ${req.sessionID}, UserID: ${req.session.userId}, CookieHeader: ${req.headers.cookie}`);
     if (!req.session.userId) return res.status(401).json({ error: "Non connecté" });
-    const user: any = db.prepare("SELECT id, email, name, two_factor_enabled, plan, credits, subscription_expires_at FROM users WHERE id = ?").get(req.session.userId);
+    const user: any = await db.get("SELECT id, email, name, two_factor_enabled, plan, credits, subscription_expires_at FROM users WHERE id = ?", req.session.userId);
     if (user) {
       res.json({ 
         user: { ...user, twoFactorEnabled: !!user.two_factor_enabled },
@@ -585,7 +622,7 @@ const SqliteStore = SQLiteStore(session);
   });
 
   // Google OAuth Routes
-  app.get("/api/auth/google/url", (req, res) => {
+  app.get("/api/auth/google/url", async (req, res) => {
     const clientId = process.env.GOOGLE_CLIENT_ID;
     if (!clientId) {
       return res.status(500).json({ error: "Google Client ID non configuré" });
@@ -640,7 +677,7 @@ const SqliteStore = SQLiteStore(session);
       const googleUser = await userResponse.json();
 
       // Find or create user
-      let user: any = db.prepare("SELECT * FROM users WHERE google_id = ? OR email = ?").get(googleUser.sub, googleUser.email);
+      let user: any = await db.get("SELECT * FROM users WHERE google_id = ? OR email = ?", googleUser.sub, googleUser.email);
 
       if (!user) {
         const id = Math.random().toString(36).substring(7);
@@ -648,7 +685,7 @@ const SqliteStore = SQLiteStore(session);
           .run(id, googleUser.email, googleUser.name, googleUser.sub, 'free', 30);
         user = { id, email: googleUser.email, name: googleUser.name, plan: 'free', credits: 30 };
       } else if (!user.google_id) {
-        db.prepare("UPDATE users SET google_id = ? WHERE id = ?").run(googleUser.sub, user.id);
+        await db.run("UPDATE users SET google_id = ? WHERE id = ?", googleUser.sub, user.id);
       }
 
       req.session.userId = user.id;
@@ -656,7 +693,7 @@ const SqliteStore = SQLiteStore(session);
       
       // Generate a temporary token for the client to "claim" the session
       const loginToken = Math.random().toString(36).substring(2) + Date.now().toString(36);
-      db.prepare("INSERT INTO temp_login_tokens (token, user_id) VALUES (?, ?)").run(loginToken, user.id);
+      await db.run("INSERT INTO temp_login_tokens (token, user_id) VALUES (?, ?)", loginToken, user.id);
 
       req.session.save((err) => {
         if (err) {
@@ -689,13 +726,13 @@ const SqliteStore = SQLiteStore(session);
   });
 
   // SaaS Routes
-  app.get("/api/saas/status", requireAuth, (req, res) => {
-    const user: any = db.prepare("SELECT plan, credits, subscription_expires_at FROM users WHERE id = ?").get(req.session.userId);
+  app.get("/api/saas/status", requireAuth, async (req, res) => {
+    const user: any = await db.get("SELECT plan, credits, subscription_expires_at FROM users WHERE id = ?", req.session.userId);
     if (!user) return res.status(404).json({ error: "Utilisateur non trouvé" });
     res.json(user);
   });
 
-  app.post("/api/saas/subscribe", requireAuth, (req, res) => {
+  app.post("/api/saas/subscribe", requireAuth, async (req, res) => {
     const { plan } = req.body; // 'student' or 'premium'
     if (!['student', 'premium'].includes(plan)) {
       return res.status(400).json({ error: "Plan invalide" });
@@ -713,7 +750,7 @@ const SqliteStore = SQLiteStore(session);
     res.json({ success: true, plan, creditsAdded: creditsToAdd, expiresAt });
   });
 
-  app.post("/api/saas/buy-credits", requireAuth, (req, res) => {
+  app.post("/api/saas/buy-credits", requireAuth, async (req, res) => {
     const { pack } = req.body; // 'mini' (50), 'medium' (150), 'memoire' (400)
     let creditsToAdd = 0;
     if (pack === 'mini') creditsToAdd = 50;
@@ -730,7 +767,7 @@ const SqliteStore = SQLiteStore(session);
     res.json({ success: true, creditsAdded: creditsToAdd });
   });
 
-  app.post("/api/saas/estimate", requireAuth, (req, res) => {
+  app.post("/api/saas/estimate", requireAuth, async (req, res) => {
     const { type, pages } = req.body; // type: 'plan' or 'generation'
     let estimatedCredits = 0;
     if (type === 'plan') {
@@ -740,7 +777,7 @@ const SqliteStore = SQLiteStore(session);
       estimatedCredits = pages || 1;
     }
     
-    const user: any = db.prepare("SELECT credits, plan FROM users WHERE id = ?").get(req.session.userId);
+    const user: any = await db.get("SELECT credits, plan FROM users WHERE id = ?", req.session.userId);
     
     res.json({ 
       estimatedCredits, 
@@ -750,15 +787,15 @@ const SqliteStore = SQLiteStore(session);
     });
   });
 
-  app.post("/api/saas/deduct", requireAuth, (req, res) => {
+  app.post("/api/saas/deduct", requireAuth, async (req, res) => {
     const { amount, description } = req.body;
-    const user: any = db.prepare("SELECT credits FROM users WHERE id = ?").get(req.session.userId);
+    const user: any = await db.get("SELECT credits FROM users WHERE id = ?", req.session.userId);
     
     if (user.credits < amount) {
       return res.status(402).json({ error: "Crédits insuffisants" });
     }
 
-    db.prepare("UPDATE users SET credits = credits - ? WHERE id = ?").run(amount, req.session.userId);
+    await db.run("UPDATE users SET credits = credits - ? WHERE id = ?", amount, req.session.userId);
     db.prepare("INSERT INTO transactions (id, user_id, type, amount, description) VALUES (?, ?, ?, ?, ?)")
       .run(Math.random().toString(36).substring(7), req.session.userId, 'usage', -amount, description);
 
@@ -766,9 +803,9 @@ const SqliteStore = SQLiteStore(session);
   });
 
 // Project Routes
-  app.get("/api/projects", requireAuth, (req, res) => {
+  app.get("/api/projects", requireAuth, async (req, res) => {
     try {
-      const projects = db.prepare("SELECT id, user_id, title, field, university, country, level, norm, min_pages, instructions, reference_text, methodology, documentType, generationMode, language, aiModel, plan, status, created_at FROM projects WHERE user_id = ? ORDER BY created_at DESC").all(req.session.userId);
+      const projects = await db.all("SELECT id, user_id, title, field, university, country, level, norm, min_pages, instructions, reference_text, methodology, documentType, generationMode, language, aiModel, plan, status, created_at FROM projects WHERE user_id = ? ORDER BY created_at DESC", req.session.userId);
       res.json(projects);
     } catch (err) {
       console.error("Get projects error:", err);
@@ -776,21 +813,19 @@ const SqliteStore = SQLiteStore(session);
     }
   });
 
-  app.post("/api/projects", requireAuth, (req, res) => {
+  app.post("/api/projects", requireAuth, async (req, res) => {
     try {
       const project = req.body;
       console.log(`[ProjectSave] User: ${req.session.userId}, ProjectID: ${project.id}`);
       
-      const existing = db.prepare("SELECT user_id FROM projects WHERE id = ?").get(project.id) as any;
+      const existing = await db.get("SELECT user_id FROM projects WHERE id = ?", project.id) as any;
       if (existing && existing.user_id !== req.session.userId) {
         return res.status(403).json({ error: "Non autorisé à modifier ce projet" });
       }
       
-      const stmt = db.prepare(`
-        INSERT OR REPLACE INTO projects (id, user_id, title, field, university, country, level, norm, min_pages, instructions, reference_text, methodology, documentType, generationMode, language, aiModel, plan, status, docx_data)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-      stmt.run(
+      await db.run(`
+        INSERT INTO projects (id, user_id, title, field, university, country, level, norm, min_pages, instructions, reference_text, methodology, documentType, generationMode, language, aiModel, plan, status, docx_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET title=EXCLUDED.title, field=EXCLUDED.field, university=EXCLUDED.university, country=EXCLUDED.country, level=EXCLUDED.level, norm=EXCLUDED.norm, min_pages=EXCLUDED.min_pages, instructions=EXCLUDED.instructions, reference_text=EXCLUDED.reference_text, methodology=EXCLUDED.methodology, documentType=EXCLUDED.documentType, generationMode=EXCLUDED.generationMode, language=EXCLUDED.language, aiModel=EXCLUDED.aiModel, plan=EXCLUDED.plan, status=EXCLUDED.status, docx_data=EXCLUDED.docx_data
+      `, 
         project.id,
         req.session.userId,
         project.title,
@@ -821,7 +856,7 @@ const SqliteStore = SQLiteStore(session);
   app.post("/api/projects/:id/docx", requireAuth, async (req, res) => {
     try {
       const { html } = req.body;
-      const project = db.prepare("SELECT user_id FROM projects WHERE id = ?").get(req.params.id) as any;
+      const project = await db.get("SELECT user_id FROM projects WHERE id = ?", req.params.id) as any;
       if (!project || project.user_id !== req.session.userId) {
         return res.status(403).json({ error: "Non autorisé" });
       }
@@ -833,7 +868,7 @@ const SqliteStore = SQLiteStore(session);
       });
 
       const base64Data = fileBuffer.toString('base64');
-      db.prepare("UPDATE projects SET docx_data = ? WHERE id = ?").run(base64Data, req.params.id);
+      await db.run("UPDATE projects SET docx_data = ? WHERE id = ?", base64Data, req.params.id);
       
       res.json({ success: true, docx_data: base64Data });
     } catch (err) {
@@ -842,10 +877,10 @@ const SqliteStore = SQLiteStore(session);
     }
   });
 
-  app.get("/api/projects/:id", requireAuth, (req, res) => {
+  app.get("/api/projects/:id", requireAuth, async (req, res) => {
     try {
       console.log(`[ProjectAccess] User ${req.session.userId} requesting project ${req.params.id}`);
-      const project: any = db.prepare("SELECT * FROM projects WHERE id = ?").get(req.params.id);
+      const project: any = await db.get("SELECT * FROM projects WHERE id = ?", req.params.id);
       
       if (!project) {
         console.warn(`[ProjectAccess] Project ${req.params.id} not found in database`);
@@ -857,7 +892,7 @@ const SqliteStore = SQLiteStore(session);
         return res.status(403).json({ error: "Vous n'avez pas l'autorisation d'accéder à ce projet." });
       }
       
-      const chapters = db.prepare("SELECT * FROM chapters WHERE project_id = ? ORDER BY order_index ASC").all(req.params.id);
+      const chapters = await db.all("SELECT * FROM chapters WHERE project_id = ? ORDER BY order_index ASC", req.params.id);
       console.log(`[Project] Retrieved project ${req.params.id} with ${chapters.length} chapters`);
       res.json({ ...project, chapters });
     } catch (err: any) {
@@ -866,13 +901,13 @@ const SqliteStore = SQLiteStore(session);
     }
   });
 
-  app.get("/api/projects/:id/chapters", requireAuth, (req, res) => {
+  app.get("/api/projects/:id/chapters", requireAuth, async (req, res) => {
     try {
-      const project = db.prepare("SELECT user_id FROM projects WHERE id = ?").get(req.params.id) as any;
+      const project = await db.get("SELECT user_id FROM projects WHERE id = ?", req.params.id) as any;
       if (!project || project.user_id !== req.session.userId) {
         return res.status(403).json({ error: "Non autorisé" });
       }
-      const chapters = db.prepare("SELECT * FROM chapters WHERE project_id = ? ORDER BY order_index ASC").all(req.params.id);
+      const chapters = await db.all("SELECT * FROM chapters WHERE project_id = ? ORDER BY order_index ASC", req.params.id);
       res.json(chapters);
     } catch (err) {
       console.error("Get project chapters error:", err);
@@ -892,15 +927,15 @@ const SqliteStore = SQLiteStore(session);
     }
   });
 
-  app.delete("/api/projects/:id", requireAuth, (req, res) => {
+  app.delete("/api/projects/:id", requireAuth, async (req, res) => {
     try {
-      const project = db.prepare("SELECT user_id FROM projects WHERE id = ?").get(req.params.id) as any;
+      const project = await db.get("SELECT user_id FROM projects WHERE id = ?", req.params.id) as any;
       if (!project || project.user_id !== req.session.userId) {
         return res.status(403).json({ error: "Non autorisé" });
       }
       // Chapters will be deleted by ON DELETE CASCADE if configured, but let's be explicit for safety
-      db.prepare("DELETE FROM chapters WHERE project_id = ?").run(req.params.id);
-      db.prepare("DELETE FROM projects WHERE id = ? AND user_id = ?").run(req.params.id, req.session.userId);
+      await db.run("DELETE FROM chapters WHERE project_id = ?", req.params.id);
+      await db.run("DELETE FROM projects WHERE id = ? AND user_id = ?", req.params.id, req.session.userId);
       res.json({ success: true });
     } catch (err) {
       console.error("Delete project error:", err);
@@ -908,29 +943,27 @@ const SqliteStore = SQLiteStore(session);
     }
   });
 
-  app.get("/api/chapters", requireAuth, (req, res) => {
-    const chapters = db.prepare(`
+  app.get("/api/chapters", requireAuth, async (req, res) => {
+    const chapters = await db.all(`
       SELECT c.* FROM chapters c 
       JOIN projects p ON c.project_id = p.id 
       WHERE p.user_id = ?
-    `).all(req.session.userId);
+    `, req.session.userId);
     res.json(chapters);
   });
 
-  app.post("/api/chapters", requireAuth, (req, res) => {
+  app.post("/api/chapters", requireAuth, async (req, res) => {
     const chapter = req.body;
     console.log(`[Chapters] Saving chapter ${chapter.id} for project ${chapter.project_id} (order: ${chapter.order_index})`);
     
-    const project = db.prepare("SELECT user_id FROM projects WHERE id = ?").get(chapter.project_id) as any;
+    const project = await db.get("SELECT user_id FROM projects WHERE id = ?", chapter.project_id) as any;
     if (!project || project.user_id !== req.session.userId) {
       return res.status(403).json({ error: "Non autorisé à modifier ce projet" });
     }
 
-    const stmt = db.prepare(`
-      INSERT OR REPLACE INTO chapters (id, project_id, title, content, order_index, word_count)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
-    stmt.run(
+    await db.run(`
+      INSERT INTO chapters (id, project_id, title, content, order_index, word_count) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET title=EXCLUDED.title, content=EXCLUDED.content, order_index=EXCLUDED.order_index, word_count=EXCLUDED.word_count
+    `, 
       chapter.id,
       chapter.project_id,
       chapter.title,
@@ -942,9 +975,9 @@ const SqliteStore = SQLiteStore(session);
   });
 
   // Chat Sessions Routes
-  app.get("/api/chat-sessions", requireAuth, (req, res) => {
+  app.get("/api/chat-sessions", requireAuth, async (req, res) => {
     try {
-      const sessions = db.prepare("SELECT id, title, messages, updated_at as updatedAt FROM chat_sessions WHERE user_id = ? ORDER BY updated_at DESC").all(req.session.userId);
+      const sessions = await db.all("SELECT id, title, messages, updated_at as updatedAt FROM chat_sessions WHERE user_id = ? ORDER BY updated_at DESC", req.session.userId);
       const formattedSessions = sessions.map((s: any) => ({
         ...s,
         messages: JSON.parse(s.messages || '[]')
@@ -956,16 +989,15 @@ const SqliteStore = SQLiteStore(session);
     }
   });
 
-  app.post("/api/chat-sessions", requireAuth, (req, res) => {
+  app.post("/api/chat-sessions", requireAuth, async (req, res) => {
     try {
       const session = req.body;
-      const existing = db.prepare("SELECT user_id FROM chat_sessions WHERE id = ?").get(session.id) as any;
+      const existing = await db.get("SELECT user_id FROM chat_sessions WHERE id = ?", session.id) as any;
       if (existing && existing.user_id !== req.session.userId) {
         return res.status(403).json({ error: "Non autorisé" });
       }
       const stmt = db.prepare(`
-        INSERT OR REPLACE INTO chat_sessions (id, user_id, title, messages, updated_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO chat_sessions (id, user_id, title, messages, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET title=EXCLUDED.title, messages=EXCLUDED.messages, updated_at=CURRENT_TIMESTAMP
       `);
       stmt.run(
         session.id,
@@ -981,9 +1013,9 @@ const SqliteStore = SQLiteStore(session);
     }
   });
 
-  app.delete("/api/chat-sessions/:id", requireAuth, (req, res) => {
+  app.delete("/api/chat-sessions/:id", requireAuth, async (req, res) => {
     try {
-      db.prepare("DELETE FROM chat_sessions WHERE id = ? AND user_id = ?").run(req.params.id, req.session.userId);
+      await db.run("DELETE FROM chat_sessions WHERE id = ? AND user_id = ?", req.params.id, req.session.userId);
       res.json({ success: true });
     } catch (err) {
       console.error("Delete chat session error:", err);
@@ -992,10 +1024,10 @@ const SqliteStore = SQLiteStore(session);
   });
 
   // Admin Routes
-  app.post("/api/admin/login", (req, res) => {
+  app.post("/api/admin/login", async (req, res) => {
     try {
       const { password } = req.body;
-      const currentSettingsRows = db.prepare("SELECT * FROM settings").all();
+      const currentSettingsRows = await db.all("SELECT * FROM settings");
       const currentSettings: any = {};
       currentSettingsRows.forEach((row: any) => {
         currentSettings[row.key] = row.value;
@@ -1027,7 +1059,7 @@ const SqliteStore = SQLiteStore(session);
     }
   });
 
-  app.post("/api/admin/logout", (req, res) => {
+  app.post("/api/admin/logout", async (req, res) => {
     if (req.session) {
       req.session.destroy((err: any) => {
         if (err) console.error("Session destroy error on logout:", err);
@@ -1043,9 +1075,9 @@ const SqliteStore = SQLiteStore(session);
     }
   });
 
-  app.get("/api/admin/users", requireAdmin, (req, res) => {
+  app.get("/api/admin/users", requireAdmin, async (req, res) => {
     try {
-      const users = db.prepare("SELECT id, email, name, created_at, plan, credits, subscription_expires_at, status FROM users ORDER BY created_at DESC").all();
+      const users = await db.all("SELECT id, email, name, created_at, plan, credits, subscription_expires_at, status FROM users ORDER BY created_at DESC");
       res.json(users);
     } catch (err) {
       console.error("Get users error:", err);
@@ -1053,7 +1085,7 @@ const SqliteStore = SQLiteStore(session);
     }
   });
 
-  app.put("/api/admin/users/:id", requireAdmin, (req, res) => {
+  app.put("/api/admin/users/:id", requireAdmin, async (req, res) => {
     try {
       const { plan, credits, status } = req.body;
       const userId = req.params.id;
@@ -1073,10 +1105,10 @@ const SqliteStore = SQLiteStore(session);
     }
   });
 
-  app.delete("/api/admin/users/:id", requireAdmin, (req, res) => {
+  app.delete("/api/admin/users/:id", requireAdmin, async (req, res) => {
     try {
       const userId = req.params.id;
-      db.prepare("DELETE FROM users WHERE id = ?").run(userId);
+      await db.run("DELETE FROM users WHERE id = ?", userId);
       res.json({ success: true });
     } catch (err) {
       console.error("Admin delete user error:", err);
@@ -1084,39 +1116,39 @@ const SqliteStore = SQLiteStore(session);
     }
   });
 
-  app.get("/api/admin/stats", requireAdmin, (req, res) => {
+  app.get("/api/admin/stats", requireAdmin, async (req, res) => {
     try {
-      const totalUsers = db.prepare("SELECT COUNT(*) as count FROM users").get() as any;
-      const totalProjects = db.prepare("SELECT COUNT(*) as count FROM projects").get() as any;
+      const totalUsers = await db.get("SELECT COUNT(*) as count FROM users") as any;
+      const totalProjects = await db.get("SELECT COUNT(*) as count FROM projects") as any;
       
       // Revenue from transactions
-      const totalRevenue = db.prepare("SELECT SUM(amount) as total FROM transactions").get() as any;
+      const totalRevenue = await db.get("SELECT SUM(amount) as total FROM transactions") as any;
       
       // Users by plan
-      const usersByPlan = db.prepare("SELECT plan, COUNT(*) as count FROM users GROUP BY plan").all();
+      const usersByPlan = await db.all("SELECT plan, COUNT(*) as count FROM users GROUP BY plan");
       
       // Projects by AI Model
-      const projectsByModel = db.prepare("SELECT aiModel, COUNT(*) as count FROM projects GROUP BY aiModel").all();
+      const projectsByModel = await db.all("SELECT aiModel, COUNT(*) as count FROM projects GROUP BY aiModel");
       
       // Projects by Document Type
-      const projectsByType = db.prepare("SELECT documentType, COUNT(*) as count FROM projects GROUP BY documentType").all();
+      const projectsByType = await db.all("SELECT documentType, COUNT(*) as count FROM projects GROUP BY documentType");
       
       // Recent transactions
-      const recentTransactions = db.prepare(`
+      const recentTransactions = await db.all(`
         SELECT t.*, u.name as user_name, u.email as user_email 
         FROM transactions t 
         JOIN users u ON t.user_id = u.id 
         ORDER BY t.created_at DESC LIMIT 10
-      `).all();
+      `);
 
       // Top users by projects
-      const topUsers = db.prepare(`
+      const topUsers = await db.all(`
         SELECT u.id, u.name, u.email, COUNT(p.id) as project_count 
         FROM users u 
         LEFT JOIN projects p ON u.id = p.user_id 
         GROUP BY u.id 
         ORDER BY project_count DESC LIMIT 5
-      `).all();
+      `);
 
       res.json({
         totalUsers: totalUsers.count,
@@ -1134,14 +1166,14 @@ const SqliteStore = SQLiteStore(session);
     }
   });
 
-  app.get("/api/admin/errors", requireAdmin, (req, res) => {
+  app.get("/api/admin/errors", requireAdmin, async (req, res) => {
     try {
-      const errors = db.prepare(`
+      const errors = await db.all(`
         SELECT e.*, u.name as user_name, u.email as user_email 
         FROM error_logs e 
         LEFT JOIN users u ON e.user_id = u.id 
         ORDER BY e.created_at DESC LIMIT 100
-      `).all();
+      `);
       res.json(errors);
     } catch (err) {
       console.error("Admin errors error:", err);
@@ -1149,7 +1181,7 @@ const SqliteStore = SQLiteStore(session);
     }
   });
 
-  app.post("/api/log-error", (req, res) => {
+  app.post("/api/log-error", async (req, res) => {
     try {
       const { message, stack, context } = req.body;
       const userId = req.session?.userId || null;
@@ -1163,8 +1195,8 @@ const SqliteStore = SQLiteStore(session);
   });
 
   // Settings Routes
-  app.get("/api/settings", (req, res) => {
-    const rows = db.prepare("SELECT * FROM settings").all();
+  app.get("/api/settings", async (req, res) => {
+    const rows = await db.all("SELECT * FROM settings");
     const settings: any = {
       priceStudent: 9.99,
       pricePremium: 24.99,
@@ -1186,24 +1218,24 @@ const SqliteStore = SQLiteStore(session);
     res.json(settings);
   });
 
-  app.post("/api/settings", requireAdmin, (req, res) => {
+  app.post("/api/settings", requireAdmin, async (req, res) => {
     try {
       const { settings } = req.body;
       
-      const stmt = db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)");
-      Object.entries(settings).forEach(([key, value]) => {
+      const stmt = db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value");
+      for (const [key, value] of Object.entries(settings)) {
         // If the client sends the default 'admin' password but the DB has a different one, don't overwrite it
         // unless they explicitly changed it. Actually, since GET /api/settings now returns the real password
         // for admins, the client will send the real password back.
         // We just need to make sure we don't accidentally save 'admin' if the client didn't get the real password.
         if (key === 'adminPassword' && value === 'admin') {
-           const current = db.prepare("SELECT value FROM settings WHERE key = 'adminPassword'").get() as any;
+           const current = await db.get("SELECT value FROM settings WHERE key = 'adminPassword'") as any;
            if (current && current.value !== 'admin') {
-             return; // Skip overwriting with default 'admin' if a custom password exists
+             continue; // Skip overwriting with default 'admin' if a custom password exists
            }
         }
-        stmt.run(key, typeof value === 'string' ? value : JSON.stringify(value));
-      });
+        await stmt.run(key, typeof value === 'string' ? value : JSON.stringify(value));
+      }
       res.json({ success: true });
     } catch (err) {
       console.error("Save settings error:", err);
@@ -1220,7 +1252,7 @@ const SqliteStore = SQLiteStore(session);
     app.use(vite.middlewares);
   } else {
     app.use(express.static(path.join(__dirname, "dist")));
-    app.get("*", (req, res) => {
+    app.get("*", async (req, res) => {
       res.sendFile(path.join(__dirname, "dist", "index.html"));
     });
   }
