@@ -633,8 +633,9 @@ sessionStore.on('error', function(err) {
       return res.status(500).json({ error: "Google Client ID non configuré" });
     }
 
-    const appUrl = (process.env.APP_URL || "").replace(/\/$/, "");
-    const redirectUri = `${appUrl}/api/auth/google/callback`;
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+    const host = req.headers['x-forwarded-host'] || req.get('host');
+    const redirectUri = `${protocol}://${host}/api/auth/google/callback`;
     
     const params = new URLSearchParams({
       client_id: clientId,
@@ -655,8 +656,10 @@ sessionStore.on('error', function(err) {
 
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-    const appUrl = (process.env.APP_URL || "").replace(/\/$/, "");
-    const redirectUri = `${appUrl}/api/auth/google/callback`;
+    
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+    const host = req.headers['x-forwarded-host'] || req.get('host');
+    const redirectUri = `${protocol}://${host}/api/auth/google/callback`;
 
     try {
       // Exchange code for tokens
