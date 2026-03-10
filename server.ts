@@ -627,6 +627,11 @@ sessionStore.on('error', function(err) {
   });
 
   // Google OAuth Routes
+  app.get("/api/config/gemini", (req, res) => {
+    // Return the API key from the server's runtime environment
+    res.json({ apiKey: process.env.GEMINI_API_KEY || "" });
+  });
+
   app.get("/api/auth/google/url", async (req, res) => {
     const clientId = process.env.GOOGLE_CLIENT_ID;
     if (!clientId) {

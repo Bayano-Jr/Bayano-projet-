@@ -5,9 +5,23 @@ import { logError } from "../utils/logger";
 
 let aiClient: GoogleGenAI | null = null;
 
-const getAiClient = (): GoogleGenAI => {
+export const getAiClient = async (): Promise<GoogleGenAI> => {
   if (!aiClient) {
-    const key = process.env.GEMINI_API_KEY;
+    let key = process.env.GEMINI_API_KEY;
+    
+    // If not injected at build time, fetch from the runtime backend
+    if (!key || key === "undefined") {
+      try {
+        const response = await fetch('/api/config/gemini');
+        if (response.ok) {
+          const data = await response.json();
+          key = data.apiKey;
+        }
+      } catch (error) {
+        console.error("Failed to fetch Gemini API key from backend:", error);
+      }
+    }
+
     if (!key) {
       throw new Error('GEMINI_API_KEY environment variable is required');
     }
@@ -17,7 +31,7 @@ const getAiClient = (): GoogleGenAI => {
 };
 
 const generateContentWithRetry = async (params: any, retries = 3, delayMs = 2000): Promise<GenerateContentResponse> => {
-  const ai = getAiClient();
+  const ai = await getAiClient();
   for (let i = 0; i < retries; i++) {
     try {
       return await ai.models.generateContent(params);

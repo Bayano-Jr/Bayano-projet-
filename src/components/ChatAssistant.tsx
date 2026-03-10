@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } from 'docx';
 import { exportChatToDOCX } from '../services/exportService';
 import { storageService } from '../services/storageService';
+import { getAiClient } from '../services/geminiService';
 import i18n from '../i18n';
 
 interface Attachment {
@@ -236,10 +237,7 @@ export default function ChatAssistant() {
     setIsLoading(true);
 
     try {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) throw new Error("Clé API Gemini manquante");
-
-      const ai = new GoogleGenAI({ apiKey });
+      const ai = await getAiClient();
       
       // Build history for context (text only to save tokens, or we could send full history)
       const historyText = messages.map(m => `${m.role === 'user' ? 'Utilisateur' : 'Assistant'}: ${m.content}`).join('\n\n');
