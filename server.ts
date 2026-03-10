@@ -35,7 +35,7 @@ pool.on('error', (err, client) => {
 const db = {
   query: async (sql, params = []) => {
     let i = 1;
-    const pgSql = sql.replace(/\?/g, () => `${i++}`);
+    const pgSql = sql.replace(/\?/g, () => `$${i++}`);
     return pool.query(pgSql, params);
   },
   get: async (sql, ...params) => {
