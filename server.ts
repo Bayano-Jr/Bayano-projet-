@@ -28,6 +28,10 @@ const pool = new Pool({
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
+pool.on('error', (err, client) => {
+  console.error('Unexpected error on idle client', err);
+});
+
 const db = {
   query: async (sql, params = []) => {
     let i = 1;
@@ -172,6 +176,28 @@ try {
 } catch (e) {
   // Columns might already exist
 }
+
+try {
+  await db.run("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'");
+} catch (e) {
+  // Column might already exist
+}
+
+const missingColumns = [
+  "methodology TEXT",
+  "documentType TEXT",
+  "generationMode TEXT",
+  "language TEXT",
+  "aiModel TEXT"
+];
+
+for (const col of missingColumns) {
+  try {
+    await db.run(`ALTER TABLE projects ADD COLUMN ${col}`);
+  } catch (e) {
+    // Column might already exist
+  }
+}
   } catch (err) {
     console.error("DB Init Error:", err);
   }
@@ -198,36 +224,15 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  // Add status column if it doesn't exist
-try {
-  await db.run("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'");
-} catch (e) {
-  // Column might already exist
-}
-
-// Add missing columns to projects table
-const missingColumns = [
-  "methodology TEXT",
-  "documentType TEXT",
-  "generationMode TEXT",
-  "language TEXT",
-  "aiModel TEXT"
-];
-
-for (const col of missingColumns) {
-  try {
-    await db.run(`ALTER TABLE projects ADD COLUMN ${col}`);
-  } catch (e) {
-    // Column might already exist
-  }
-}
-
-
 const PgStore = pgSession(session);
 const sessionStore = new PgStore({
   pool: pool,
   tableName: 'session',
   createTableIfMissing: true
+});
+
+sessionStore.on('error', function(err) {
+  console.error('Session store error:', err);
 });
 
 
@@ -586,7 +591,7 @@ const sessionStore = new PgStore({
     const { token } = req.query;
     if (!token) return res.status(400).json({ error: "Jeton manquant" });
 
-    const row: any = await db.get("SELECT user_id FROM temp_login_tokens WHERE token = ? AND created_at > datetime('now', '-5 minutes')", token);
+    const row: any = await db.get("SELECT user_id FROM temp_login_tokens WHERE token = ? AND created_at > NOW() - INTERVAL '5 minutes'", token);
     
     if (row) {
       // Clean up token
@@ -1262,4 +1267,7 @@ const sessionStore = new PgStore({
   });
 }
 
-startServer();
+startServer().catch(err => {
+  console.error("Failed to start server:", err);
+  process.exit(1);
+});
