@@ -39,12 +39,7 @@ gcloud run deploy react-example \
 
 Le fichier `cloudbuild.yaml` est inclus pour automatiser le déploiement. Vous pouvez l'utiliser avec des déclencheurs Cloud Build liés à votre dépôt GitHub.
 
-**Important** : Lors de la configuration de votre déclencheur Cloud Build, vous devez définir les variables de substitution suivantes :
-- `_GEMINI_API_KEY`
-- `_SESSION_SECRET`
-- `_APP_URL`
-- `_GOOGLE_CLIENT_ID` (Optionnel)
-- `_GOOGLE_CLIENT_SECRET` (Optionnel)
+**Important** : Le fichier `cloudbuild.yaml` a été mis à jour pour **ne plus écraser** vos variables d'environnement. Vous devez simplement aller dans la console Google Cloud Run, onglet "Variables et secrets", et configurer vos variables (`GEMINI_API_KEY`, `SESSION_SECRET`, `GOOGLE_CLIENT_ID`, etc.). À chaque nouveau "push" sur GitHub, Cloud Build déploiera la nouvelle version du code tout en conservant vos variables intactes.
 
 ## Base de données
 

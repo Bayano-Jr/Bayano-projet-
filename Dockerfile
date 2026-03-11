@@ -10,8 +10,6 @@ RUN npm ci
 COPY . .
 
 # Build the client application
-ARG GEMINI_API_KEY
-ENV GEMINI_API_KEY=$GEMINI_API_KEY
 RUN npm run build
 
 # Expose the port
