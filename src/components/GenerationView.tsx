@@ -64,6 +64,9 @@ export default function GenerationView({ project, user, onUpdateUser, onShowPric
         body: JSON.stringify({ type: 'generation', pages: project.min_pages }),
         credentials: 'include'
       });
+      if (res.status === 401) {
+        throw new Error("Session expirée. Veuillez vous reconnecter.");
+      }
       if (!res.ok) throw new Error("Failed to estimate credits");
       const estimateData = await res.json();
       

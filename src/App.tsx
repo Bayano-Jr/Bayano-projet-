@@ -195,6 +195,10 @@ export default function App() {
         body: JSON.stringify({ type: 'plan' }),
         credentials: 'include'
       });
+      if (res.status === 401) {
+        setUser(null);
+        return;
+      }
       if (!res.ok) throw new Error("Failed to estimate credits");
       const estimateData = await res.json();
       

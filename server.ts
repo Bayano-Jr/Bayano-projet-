@@ -1,8 +1,11 @@
 import express from "express";
 import session from "express-session";
 import pgSession from "connect-pg-simple";
+import SQLiteStoreFactory from "connect-sqlite3";
 import bcrypt from "bcryptjs";
 import { Pool } from "pg";
+import sqlite3 from "sqlite3";
+import { open } from "sqlite";
 import cors from "cors";
 import { createServer as createViteServer } from "vite";
 import path from "path";
@@ -22,50 +25,104 @@ declare module "express-session" {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const usePostgres = !!process.env.DATABASE_URL;
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-});
+let pool: Pool | null = null;
+let sqliteDb: any = null;
 
-pool.on('error', (err, client) => {
-  console.error('Unexpected error on idle client', err);
-});
+if (usePostgres) {
+  pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
+  });
+
+  pool.on('error', (err, client) => {
+    console.error('Unexpected error on idle client', err);
+  });
+}
 
 const db = {
-  query: async (sql, params = []) => {
-    let i = 1;
-    const pgSql = sql.replace(/\?/g, () => `$${i++}`);
-    return pool.query(pgSql, params);
+  query: async (sql: string, params: any[] = []) => {
+    if (usePostgres && pool) {
+      let i = 1;
+      const pgSql = sql.replace(/\?/g, () => `$${i++}`);
+      return pool.query(pgSql, params);
+    } else if (sqliteDb) {
+      const result = await sqliteDb.all(sql, params);
+      return { rows: result };
+    }
+    return { rows: [] };
   },
-  get: async (sql, ...params) => {
-    const res = await db.query(sql, params);
-    return res.rows[0];
+  get: async (sql: string, ...params: any[]) => {
+    if (usePostgres && pool) {
+      let i = 1;
+      const pgSql = sql.replace(/\?/g, () => `$${i++}`);
+      const res = await pool.query(pgSql, params);
+      return res.rows[0];
+    } else if (sqliteDb) {
+      return sqliteDb.get(sql, ...params);
+    }
   },
-  all: async (sql, ...params) => {
-    const res = await db.query(sql, params);
-    return res.rows;
+  all: async (sql: string, ...params: any[]) => {
+    if (usePostgres && pool) {
+      let i = 1;
+      const pgSql = sql.replace(/\?/g, () => `$${i++}`);
+      const res = await pool.query(pgSql, params);
+      return res.rows;
+    } else if (sqliteDb) {
+      return sqliteDb.all(sql, ...params);
+    }
+    return [];
   },
-  run: async (sql, ...params) => {
-    await db.query(sql, params);
+  run: async (sql: string, ...params: any[]) => {
+    if (usePostgres && pool) {
+      let i = 1;
+      const pgSql = sql.replace(/\?/g, () => `$${i++}`);
+      await pool.query(pgSql, params);
+    } else if (sqliteDb) {
+      await sqliteDb.run(sql, ...params);
+    }
   },
-  exec: async (sql) => {
-    await pool.query(sql);
+  exec: async (sql: string) => {
+    if (usePostgres && pool) {
+      await pool.query(sql);
+    } else if (sqliteDb) {
+      await sqliteDb.exec(sql);
+    }
   },
-  prepare: (sql) => {
+  prepare: (sql: string) => {
     return {
-      run: async (...params) => {
-        await db.query(sql, params);
+      run: (...params: any[]) => {
+        (async () => {
+          try {
+            if (usePostgres && pool) {
+              let i = 1;
+              const pgSql = sql.replace(/\?/g, () => `$${i++}`);
+              await pool.query(pgSql, params);
+            } else if (sqliteDb) {
+              await sqliteDb.run(sql, ...params);
+            }
+          } catch (err) {
+            console.error("Async db.prepare run error:", err);
+          }
+        })();
       }
     };
   }
 };
 
-
-
 // Initialize database
 (async () => {
   try {
+    if (!usePostgres) {
+      sqliteDb = await open({
+        filename: process.env.DB_PATH || 'database.sqlite',
+        driver: sqlite3.Database
+      });
+      console.log("Using SQLite database");
+    } else {
+      console.log("Using PostgreSQL database");
+    }
     await db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
@@ -224,17 +281,29 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-const PgStore = pgSession(session);
-const sessionStore = new PgStore({
-  pool: pool,
-  tableName: 'session',
-  createTableIfMissing: true
-});
+  let sessionStore;
+  if (usePostgres && pool) {
+    const PgStore = pgSession(session);
+    sessionStore = new PgStore({
+      pool: pool,
+      tableName: 'session',
+      createTableIfMissing: true
+    });
+  } else {
+    const SQLiteStore = SQLiteStoreFactory(session);
+    sessionStore = new SQLiteStore({
+      db: process.env.DB_PATH || 'database.sqlite',
+      dir: '.'
+    });
+  }
 
-sessionStore.on('error', function(err) {
-  console.error('Session store error:', err);
-});
+  // @ts-ignore
+  sessionStore.on?.('error', function(err: any) {
+    console.error('Session store error:', err);
+  });
 
+
+  const isProd = process.env.NODE_ENV === 'production' || !!process.env.APP_URL;
 
   app.use(session({
     name: 'bayano_sid_v4',
@@ -245,11 +314,11 @@ sessionStore.on('error', function(err) {
     rolling: true,
     proxy: true,
     cookie: {
-      secure: true,
-      sameSite: 'none',
+      secure: isProd,
+      sameSite: isProd ? 'none' : 'lax',
       httpOnly: true,
       maxAge: 1000 * 60 * 60 * 24 * 30, // 30 days
-      partitioned: true
+      partitioned: isProd
     }
   }));
 
@@ -576,9 +645,9 @@ sessionStore.on('error', function(err) {
 
   app.post("/api/auth/logout", async (req, res) => {
     req.session.destroy(() => {
-      res.clearCookie("bayano.sid", {
-        secure: true,
-        sameSite: 'none',
+      res.clearCookie("bayano_sid_v4", {
+        secure: isProd,
+        sameSite: isProd ? 'none' : 'lax',
         httpOnly: true
       });
       res.json({ success: true });
@@ -638,9 +707,16 @@ sessionStore.on('error', function(err) {
       return res.status(500).json({ error: "Google Client ID non configuré" });
     }
 
-    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-    const host = req.headers['x-forwarded-host'] || req.get('host');
-    const redirectUri = `${protocol}://${host}/api/auth/google/callback`;
+    let redirectUri = "";
+    if (process.env.APP_URL) {
+      // Remove trailing slash if present
+      const baseUrl = process.env.APP_URL.replace(/\/$/, "");
+      redirectUri = `${baseUrl}/api/auth/google/callback`;
+    } else {
+      const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+      const host = req.headers['x-forwarded-host'] || req.get('host');
+      redirectUri = `${protocol}://${host}/api/auth/google/callback`;
+    }
     
     const params = new URLSearchParams({
       client_id: clientId,
@@ -662,9 +738,15 @@ sessionStore.on('error', function(err) {
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
     
-    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-    const host = req.headers['x-forwarded-host'] || req.get('host');
-    const redirectUri = `${protocol}://${host}/api/auth/google/callback`;
+    let redirectUri = "";
+    if (process.env.APP_URL) {
+      const baseUrl = process.env.APP_URL.replace(/\/$/, "");
+      redirectUri = `${baseUrl}/api/auth/google/callback`;
+    } else {
+      const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+      const host = req.headers['x-forwarded-host'] || req.get('host');
+      redirectUri = `${protocol}://${host}/api/auth/google/callback`;
+    }
 
     try {
       // Exchange code for tokens
@@ -694,8 +776,8 @@ sessionStore.on('error', function(err) {
 
       if (!user) {
         const id = Math.random().toString(36).substring(7);
-        db.prepare("INSERT INTO users (id, email, name, google_id, plan, credits) VALUES (?, ?, ?, ?, ?, ?)")
-          .run(id, googleUser.email, googleUser.name, googleUser.sub, 'free', 30);
+        await db.run("INSERT INTO users (id, email, name, google_id, plan, credits) VALUES (?, ?, ?, ?, ?, ?)",
+          id, googleUser.email, googleUser.name, googleUser.sub, 'free', 30);
         user = { id, email: googleUser.email, name: googleUser.name, plan: 'free', credits: 30 };
       } else if (!user.google_id) {
         await db.run("UPDATE users SET google_id = ? WHERE id = ?", googleUser.sub, user.id);
@@ -754,11 +836,11 @@ sessionStore.on('error', function(err) {
     const creditsToAdd = plan === 'student' ? 300 : 800;
     const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(); // 30 days
 
-    db.prepare("UPDATE users SET plan = ?, credits = credits + ?, subscription_expires_at = ? WHERE id = ?")
-      .run(plan, creditsToAdd, expiresAt, req.session.userId);
+    await db.run("UPDATE users SET plan = ?, credits = credits + ?, subscription_expires_at = ? WHERE id = ?",
+      plan, creditsToAdd, expiresAt, req.session.userId);
 
-    db.prepare("INSERT INTO transactions (id, user_id, type, amount, description) VALUES (?, ?, ?, ?, ?)")
-      .run(Math.random().toString(36).substring(7), req.session.userId, 'subscription', creditsToAdd, `Abonnement ${plan}`);
+    await db.run("INSERT INTO transactions (id, user_id, type, amount, description) VALUES (?, ?, ?, ?, ?)",
+      Math.random().toString(36).substring(7), req.session.userId, 'subscription', creditsToAdd, `Abonnement ${plan}`);
 
     res.json({ success: true, plan, creditsAdded: creditsToAdd, expiresAt });
   });
@@ -771,48 +853,66 @@ sessionStore.on('error', function(err) {
     else if (pack === 'memoire') creditsToAdd = 400;
     else return res.status(400).json({ error: "Pack invalide" });
 
-    db.prepare("UPDATE users SET credits = credits + ? WHERE id = ?")
-      .run(creditsToAdd, req.session.userId);
+    await db.run("UPDATE users SET credits = credits + ? WHERE id = ?",
+      creditsToAdd, req.session.userId);
 
-    db.prepare("INSERT INTO transactions (id, user_id, type, amount, description) VALUES (?, ?, ?, ?, ?)")
-      .run(Math.random().toString(36).substring(7), req.session.userId, 'pack', creditsToAdd, `Achat pack ${pack}`);
+    await db.run("INSERT INTO transactions (id, user_id, type, amount, description) VALUES (?, ?, ?, ?, ?)",
+      Math.random().toString(36).substring(7), req.session.userId, 'pack', creditsToAdd, `Achat pack ${pack}`);
 
     res.json({ success: true, creditsAdded: creditsToAdd });
   });
 
   app.post("/api/saas/estimate", requireAuth, async (req, res) => {
-    const { type, pages } = req.body; // type: 'plan' or 'generation'
-    let estimatedCredits = 0;
-    if (type === 'plan') {
-      estimatedCredits = 2; // Fixed cost for plan
-    } else if (type === 'generation') {
-      // 1 page = ~250 words = 1 credit
-      estimatedCredits = pages || 1;
+    try {
+      const { type, pages } = req.body; // type: 'plan' or 'generation'
+      let estimatedCredits = 0;
+      if (type === 'plan') {
+        estimatedCredits = 2; // Fixed cost for plan
+      } else if (type === 'generation') {
+        // 1 page = ~250 words = 1 credit
+        estimatedCredits = pages || 1;
+      }
+      
+      const user: any = await db.get("SELECT credits, plan FROM users WHERE id = ?", req.session.userId);
+      
+      if (!user) {
+        return res.status(404).json({ error: "Utilisateur non trouvé" });
+      }
+
+      res.json({ 
+        estimatedCredits, 
+        hasEnough: user.credits >= estimatedCredits,
+        currentCredits: user.credits,
+        plan: user.plan
+      });
+    } catch (error: any) {
+      console.error("Error in /api/saas/estimate:", error);
+      res.status(500).json({ error: "Internal server error", details: error.message });
     }
-    
-    const user: any = await db.get("SELECT credits, plan FROM users WHERE id = ?", req.session.userId);
-    
-    res.json({ 
-      estimatedCredits, 
-      hasEnough: user.credits >= estimatedCredits,
-      currentCredits: user.credits,
-      plan: user.plan
-    });
   });
 
   app.post("/api/saas/deduct", requireAuth, async (req, res) => {
-    const { amount, description } = req.body;
-    const user: any = await db.get("SELECT credits FROM users WHERE id = ?", req.session.userId);
-    
-    if (user.credits < amount) {
-      return res.status(402).json({ error: "Crédits insuffisants" });
+    try {
+      const { amount, description } = req.body;
+      const user: any = await db.get("SELECT credits FROM users WHERE id = ?", req.session.userId);
+      
+      if (!user) {
+        return res.status(404).json({ error: "Utilisateur non trouvé" });
+      }
+
+      if (user.credits < amount) {
+        return res.status(402).json({ error: "Crédits insuffisants" });
+      }
+
+      await db.run("UPDATE users SET credits = credits - ? WHERE id = ?", amount, req.session.userId);
+      await db.run("INSERT INTO transactions (id, user_id, type, amount, description) VALUES (?, ?, ?, ?, ?)",
+        Math.random().toString(36).substring(7), req.session.userId, 'usage', -amount, description);
+
+      res.json({ success: true, remainingCredits: user.credits - amount });
+    } catch (error: any) {
+      console.error("Error in /api/saas/deduct:", error);
+      res.status(500).json({ error: "Internal server error", details: error.message });
     }
-
-    await db.run("UPDATE users SET credits = credits - ? WHERE id = ?", amount, req.session.userId);
-    db.prepare("INSERT INTO transactions (id, user_id, type, amount, description) VALUES (?, ?, ?, ?, ?)")
-      .run(Math.random().toString(36).substring(7), req.session.userId, 'usage', -amount, description);
-
-    res.json({ success: true, remainingCredits: user.credits - amount });
   });
 
 // Project Routes
@@ -928,11 +1028,10 @@ sessionStore.on('error', function(err) {
     }
   });
 
-  app.patch("/api/projects/:id/plan", requireAuth, (req, res) => {
+  app.patch("/api/projects/:id/plan", requireAuth, async (req, res) => {
     try {
       const { plan } = req.body;
-      db.prepare("UPDATE projects SET plan = ?, status = 'plan_validated' WHERE id = ? AND user_id = ?")
-        .run(JSON.stringify(plan), req.params.id, req.session.userId);
+      await db.run("UPDATE projects SET plan = ?, status = 'plan_validated' WHERE id = ? AND user_id = ?", JSON.stringify(plan), req.params.id, req.session.userId);
       res.json({ success: true });
     } catch (err) {
       console.error("Update plan error:", err);
@@ -966,25 +1065,30 @@ sessionStore.on('error', function(err) {
   });
 
   app.post("/api/chapters", requireAuth, async (req, res) => {
-    const chapter = req.body;
-    console.log(`[Chapters] Saving chapter ${chapter.id} for project ${chapter.project_id} (order: ${chapter.order_index})`);
-    
-    const project = await db.get("SELECT user_id FROM projects WHERE id = ?", chapter.project_id) as any;
-    if (!project || project.user_id !== req.session.userId) {
-      return res.status(403).json({ error: "Non autorisé à modifier ce projet" });
-    }
+    try {
+      const chapter = req.body;
+      console.log(`[Chapters] Saving chapter ${chapter.id} for project ${chapter.project_id} (order: ${chapter.order_index})`);
+      
+      const project = await db.get("SELECT user_id FROM projects WHERE id = ?", chapter.project_id) as any;
+      if (!project || project.user_id !== req.session.userId) {
+        return res.status(403).json({ error: "Non autorisé à modifier ce projet" });
+      }
 
-    await db.run(`
-      INSERT INTO chapters (id, project_id, title, content, order_index, word_count) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET title=EXCLUDED.title, content=EXCLUDED.content, order_index=EXCLUDED.order_index, word_count=EXCLUDED.word_count
-    `, 
-      chapter.id,
-      chapter.project_id,
-      chapter.title,
-      chapter.content,
-      chapter.order_index,
-      chapter.word_count
-    );
-    res.json({ success: true });
+      await db.run(`
+        INSERT INTO chapters (id, project_id, title, content, order_index, word_count) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET title=EXCLUDED.title, content=EXCLUDED.content, order_index=EXCLUDED.order_index, word_count=EXCLUDED.word_count
+      `, 
+        chapter.id,
+        chapter.project_id,
+        chapter.title,
+        chapter.content,
+        chapter.order_index,
+        chapter.word_count
+      );
+      res.json({ success: true });
+    } catch (err) {
+      console.error("Save chapter error:", err);
+      res.status(500).json({ error: "Erreur lors de la sauvegarde du chapitre" });
+    }
   });
 
   // Chat Sessions Routes
@@ -1009,10 +1113,9 @@ sessionStore.on('error', function(err) {
       if (existing && existing.user_id !== req.session.userId) {
         return res.status(403).json({ error: "Non autorisé" });
       }
-      const stmt = db.prepare(`
+      await db.run(`
         INSERT INTO chat_sessions (id, user_id, title, messages, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET title=EXCLUDED.title, messages=EXCLUDED.messages, updated_at=CURRENT_TIMESTAMP
-      `);
-      stmt.run(
+      `,
         session.id,
         req.session.userId,
         session.title,
@@ -1077,14 +1180,50 @@ sessionStore.on('error', function(err) {
       req.session.destroy((err: any) => {
         if (err) console.error("Session destroy error on logout:", err);
         res.clearCookie("bayano_sid_v4", {
-          secure: true,
-          sameSite: 'none',
+          secure: isProd,
+          sameSite: isProd ? 'none' : 'lax',
           httpOnly: true
         });
         res.json({ success: true });
       });
     } else {
       res.json({ success: true });
+    }
+  });
+
+  app.get("/api/admin/error-logs", async (req, res) => {
+    try {
+      const logs = await db.all("SELECT * FROM error_logs ORDER BY created_at DESC LIMIT 50");
+      res.json(logs);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/admin/schema", async (req, res) => {
+    try {
+      if (usePostgres && pool) {
+        const tables = await pool.query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'");
+        const columns = await pool.query("SELECT table_name, column_name, data_type FROM information_schema.columns WHERE table_schema = 'public'");
+        res.json({ tables: tables.rows, columns: columns.rows });
+      } else {
+        res.json({ error: "Not using Postgres" });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/admin/sessions", async (req, res) => {
+    try {
+      if (usePostgres && pool) {
+        const sessions = await pool.query("SELECT * FROM session");
+        res.json(sessions.rows);
+      } else {
+        res.json({ error: "Not using Postgres" });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
@@ -1108,8 +1247,8 @@ sessionStore.on('error', function(err) {
         expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
       }
 
-      db.prepare("UPDATE users SET plan = ?, credits = ?, subscription_expires_at = ?, status = ? WHERE id = ?")
-        .run(plan, credits, expiresAt, status || 'active', userId);
+      await db.run("UPDATE users SET plan = ?, credits = ?, subscription_expires_at = ?, status = ? WHERE id = ?",
+        plan, credits, expiresAt, status || 'active', userId);
         
       res.json({ success: true });
     } catch (err) {
@@ -1198,8 +1337,8 @@ sessionStore.on('error', function(err) {
     try {
       const { message, stack, context } = req.body;
       const userId = req.session?.userId || null;
-      db.prepare("INSERT INTO error_logs (id, user_id, error_message, error_stack, context) VALUES (?, ?, ?, ?, ?)")
-        .run(crypto.randomUUID(), userId, message, stack, JSON.stringify(context));
+      await db.run("INSERT INTO error_logs (id, user_id, error_message, error_stack, context) VALUES (?, ?, ?, ?, ?)",
+        crypto.randomUUID(), userId, message, stack, JSON.stringify(context));
       res.json({ success: true });
     } catch (err) {
       console.error("Log error failed:", err);
@@ -1235,7 +1374,6 @@ sessionStore.on('error', function(err) {
     try {
       const { settings } = req.body;
       
-      const stmt = db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value");
       for (const [key, value] of Object.entries(settings)) {
         // If the client sends the default 'admin' password but the DB has a different one, don't overwrite it
         // unless they explicitly changed it. Actually, since GET /api/settings now returns the real password
@@ -1247,7 +1385,8 @@ sessionStore.on('error', function(err) {
              continue; // Skip overwriting with default 'admin' if a custom password exists
            }
         }
-        await stmt.run(key, typeof value === 'string' ? value : JSON.stringify(value));
+        await db.run("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+          key, typeof value === 'string' ? value : JSON.stringify(value));
       }
       res.json({ success: true });
     } catch (err) {
