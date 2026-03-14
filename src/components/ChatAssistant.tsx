@@ -10,6 +10,8 @@ import { storageService } from '../services/storageService';
 import { getAiClient } from '../services/geminiService';
 import i18n from '../i18n';
 
+import { User as UserType } from '../types';
+
 interface Attachment {
   name: string;
   mimeType: string;
@@ -32,7 +34,13 @@ interface ChatSession {
   updatedAt: Date;
 }
 
-export default function ChatAssistant() {
+interface ChatAssistantProps {
+  user: UserType | null;
+  onUpdateUser: (user: UserType) => void;
+  onShowPricing: () => void;
+}
+
+export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: ChatAssistantProps) {
   const { t } = useTranslation();
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
@@ -187,6 +195,38 @@ export default function ChatAssistant() {
 
   const handleSend = async () => {
     if ((!input.trim() && attachments.length === 0) || isLoading) return;
+    if (!user) return;
+
+    if (user.credits < 1) {
+      onShowPricing();
+      return;
+    }
+
+    // Deduct credits
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      const sid = localStorage.getItem('bayano_sid');
+      if (sid) {
+        headers['Authorization'] = `Bearer ${sid}`;
+      }
+      const deductRes = await fetch('/api/saas/deduct', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ amount: 1, description: `Message Chat IA` }),
+        credentials: 'include'
+      });
+      
+      if (deductRes.ok) {
+        const deductData = await deductRes.json();
+        onUpdateUser({ ...user, credits: deductData.remainingCredits });
+      } else {
+        console.error("Erreur de déduction de crédits");
+        return;
+      }
+    } catch (e) {
+      console.error(e);
+      return;
+    }
 
     let sessionId = currentSessionId;
     let newTitle = '';

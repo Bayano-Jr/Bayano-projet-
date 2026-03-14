@@ -342,15 +342,9 @@ export default function ProjectWizard({ user, onCancel, onComplete, onShowPricin
               advice = "Un rapport de stage fait généralement entre 30 et 50 pages.";
             }
 
-            // Apply Plan Limits
-            let planMaxPages = maxPages;
-            if (user.plan === 'free') planMaxPages = Math.min(maxPages, 15);
-            else if (user.plan === 'student') planMaxPages = Math.min(maxPages, 60);
-
-            // Allow using credits to bypass plan limits
-            if (user.credits > planMaxPages) {
-              planMaxPages = Math.min(maxPages, user.credits);
-            }
+            // Limit max pages based on available credits, but ensure it's at least minPages for the slider to work
+            // The actual generation will still be blocked if credits are insufficient
+            let planMaxPages = Math.max(minPages, Math.min(maxPages, user.credits));
 
             // Ensure current value is within bounds
             if (formData.min_pages! < minPages) formData.min_pages = minPages;
@@ -393,7 +387,7 @@ export default function ProjectWizard({ user, onCancel, onComplete, onShowPricin
                         <Lock size={16} className="text-accent shrink-0 mt-0.5" />
                         <div>
                           <p className="text-xs text-slate-600 mb-2">
-                            Votre plan actuel ({user.plan === 'free' ? 'Gratuit' : 'Étudiant Plus'}) et vos crédits ({user.credits}) limitent la génération à <strong className="text-academic-900">{planMaxPages} pages</strong>.
+                            Vos crédits actuels ({user.credits}) limitent la génération à <strong className="text-academic-900">{planMaxPages} pages</strong>.
                           </p>
                           <button onClick={onShowPricing} className="text-xs font-bold text-accent hover:underline">
                             Débloquer plus de pages
@@ -423,18 +417,11 @@ export default function ProjectWizard({ user, onCancel, onComplete, onShowPricin
                       className="academic-input h-14 px-6 bg-slate-50/50 border-slate-100 focus:bg-white transition-all appearance-none"
                       value={formData.aiModel}
                       onChange={e => setFormData({...formData, aiModel: e.target.value})}
-                      disabled={user.plan === 'free' && user.credits < 50}
                     >
                       <option value="gemini-3-flash-preview">{t('wizard.flash')}</option>
-                      {(user.plan !== 'free' || user.credits >= 50) && <option value="gemini-3.1-pro-preview">{t('wizard.pro')}</option>}
+                      <option value="gemini-3.1-pro-preview">{t('wizard.pro')}</option>
                     </select>
-                    {user.plan === 'free' && user.credits < 50 ? (
-                      <p className="text-xs text-accent mt-2 italic flex items-center gap-1">
-                        <Lock size={12} /> Modèle Pro réservé aux plans payants ou avec au moins 50 crédits. <button onClick={onShowPricing} className="font-bold hover:underline">Mettre à niveau</button>
-                      </p>
-                    ) : (
-                      <p className="text-xs text-slate-400 mt-2 italic">{t('wizard.modelDesc')}</p>
-                    )}
+                    <p className="text-xs text-slate-400 mt-2 italic">{t('wizard.modelDesc')}</p>
                   </div>
 
                   {formData.documentType === 'tp' && (

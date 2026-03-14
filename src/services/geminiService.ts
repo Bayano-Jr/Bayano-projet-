@@ -7,22 +7,27 @@ let aiClient: GoogleGenAI | null = null;
 
 export const getAiClient = async (): Promise<GoogleGenAI> => {
   if (!aiClient) {
-    let key = process.env.GEMINI_API_KEY;
+    let key = "";
     
-    // If not injected at build time, fetch from the runtime backend
-    if (!key || key === "undefined") {
-      try {
-        const response = await fetch('/api/config/gemini');
-        if (response.ok) {
-          const data = await response.json();
+    // Always try to fetch from backend first to ensure we get the runtime key (e.g. from Cloud Run)
+    try {
+      const response = await fetch('/api/config/gemini');
+      if (response.ok) {
+        const data = await response.json();
+        if (data.apiKey) {
           key = data.apiKey;
         }
-      } catch (error) {
-        console.error("Failed to fetch Gemini API key from backend:", error);
       }
+    } catch (error) {
+      console.error("Failed to fetch Gemini API key from backend:", error);
     }
 
-    if (!key) {
+    // Fallback to build-time injected key if backend fetch fails or returns empty
+    if (!key || key === "undefined") {
+      key = process.env.GEMINI_API_KEY as string;
+    }
+
+    if (!key || key === "undefined") {
       throw new Error('GEMINI_API_KEY environment variable is required');
     }
     aiClient = new GoogleGenAI({ apiKey: key });
@@ -511,14 +516,24 @@ export const refinePlan = async (
 };
 
 export const detectAIContent = async (text: string): Promise<{ aiProbability: number, humanProbability: number }> => {
-  const prompt = `En tant qu'expert en linguistique computationnelle et détection de contenu généré par l'IA, analyse le texte suivant et détermine la probabilité qu'il ait été généré par une intelligence artificielle (comme ChatGPT, Claude, Gemini, etc.) par rapport à un humain.
+  const prompt = `En tant qu'expert en détection de contenu généré par l'IA, analyse ce texte. 
+Attention : Ne confonds pas un texte académique bien écrit par un humain avec un texte généré par l'IA. Les humains peuvent écrire sans fautes et de manière structurée.
 
 TEXTE À ANALYSER:
 ---
-${text.substring(0, 10000)} // Limite à 10000 caractères pour l'analyse
+${text.substring(0, 10000)}
 ---
 
-Réponds UNIQUEMENT avec un objet JSON contenant deux propriétés : "aiProbability" (un nombre entre 0 et 100 représentant le pourcentage de probabilité que ce soit de l'IA) et "humanProbability" (un nombre entre 0 et 100 représentant le pourcentage de probabilité que ce soit humain). La somme des deux doit faire 100.`;
+Pour déterminer la probabilité d'IA, cherche UNIQUEMENT ces signes révélateurs :
+1. Manque de "Burstiness" (toutes les phrases ont presque la même longueur et la même structure rythmique).
+2. Manque de "Perplexité" (vocabulaire extrêmement prévisible, plat, sans aspérité ni choix de mots singuliers).
+3. Présence de tics de langage IA ("Il est crucial de", "Dans un monde en constante évolution", "En conclusion", "Il convient de noter", "Cependant", "En outre").
+4. Symétrie excessive et transitions robotiques entre les paragraphes.
+
+Si le texte semble naturel, même s'il est très bien écrit, donne une forte probabilité humaine (ex: 80-95%).
+Ne donne une forte probabilité IA (>70%) que si les tics de langage IA sont flagrants et la structure est robotique.
+
+Réponds UNIQUEMENT avec un objet JSON contenant deux propriétés : "aiProbability" (un nombre entre 0 et 100) et "humanProbability" (un nombre entre 0 et 100). La somme doit faire 100.`;
 
   try {
     const response = await generateContentWithRetry({
@@ -526,6 +541,7 @@ Réponds UNIQUEMENT avec un objet JSON contenant deux propriétés : "aiProbabil
       contents: prompt,
       config: {
         responseMimeType: "application/json",
+        temperature: 0.1, // Low temperature for more consistent analysis
       },
     });
 
@@ -541,25 +557,28 @@ Réponds UNIQUEMENT avec un objet JSON contenant deux propriétés : "aiProbabil
 };
 
 export const paraphraseText = async (text: string, language: string = 'fr'): Promise<string> => {
-  const prompt = `Tu es un expert en rédaction académique et en reformulation. Ta tâche est de paraphraser le texte suivant pour qu'il paraisse totalement naturel, humain, et qu'il passe les détecteurs d'IA (comme Turnitin, Compilatio, etc.) tout en conservant EXACTEMENT le même sens, les mêmes arguments et le même niveau académique.
+  const prompt = `Tu es un professeur d'université et un rédacteur académique expert. Ta tâche est de réécrire le texte suivant pour qu'il soit indétectable par les détecteurs d'IA (Turnitin, Compilatio) TOUT EN CONSERVANT RIGOUREUSEMENT le sens exact, la nuance, le contexte et le niveau académique du texte d'origine.
 
 TEXTE ORIGINAL:
 ---
 ${text}
 ---
 
-CONSIGNES DE PARAPHRASE:
-1. Modifie la structure des phrases (voix active/passive, inversion, etc.).
-2. Utilise des synonymes pertinents et un vocabulaire riche mais naturel.
-3. Varie la longueur des phrases pour imiter le rythme d'écriture humain (burstiness).
-4. Évite les tournures typiques de l'IA (ex: "Il est important de noter que", "En conclusion", "Dans le paysage actuel").
+CONSIGNES STRICTES DE REFORMULATION:
+1. PRIORITÉ ABSOLUE : Préserve le sens exact, les concepts clés, et la logique du texte d'origine. Ne perds aucune information et ne déforme pas le contexte.
+2. Ton académique et fluide : Garde un style professionnel, universitaire et cohérent. Les phrases ne doivent pas être artificiellement courtes ou hachées. L'enchaînement des idées doit être parfait.
+3. Humanisation naturelle : Pour éviter la détection IA, utilise un vocabulaire riche, précis et varié. Reformule les phrases de manière élégante sans utiliser de structures robotiques, mais garde des phrases de longueur normale pour un mémoire.
+4. Élimine les tics de l'IA : N'utilise JAMAIS d'expressions stéréotypées comme "Il est important de noter que", "En conclusion", "Dans le paysage actuel", "Il convient de souligner", "Cependant", "En outre", "Crucial".
 5. La langue de sortie doit être: ${language === 'en' ? 'Anglais' : 'Français'}.
-6. Ne réponds QUE par le texte paraphrasé, sans aucun commentaire avant ou après.`;
+6. Ne réponds QUE par le texte paraphrasé, sans aucun commentaire.`;
 
   try {
     const response = await generateContentWithRetry({
       model: "gemini-3.1-pro-preview", // Use Pro for better paraphrasing quality
       contents: prompt,
+      config: {
+        temperature: 0.3, // Lower temperature to maintain strict academic meaning and context
+      }
     });
 
     return response.text || text;

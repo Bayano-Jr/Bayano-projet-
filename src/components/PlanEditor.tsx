@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Check, Edit2, Save, X, Plus, Trash2, GripVertical, Sparkles, Send, Loader2, Database, Layout } from 'lucide-react';
-import { PlanStructure, Project } from '../types';
+import { PlanStructure, Project, User as UserType } from '../types';
 import { motion, Reorder } from 'motion/react';
 import { refinePlan } from '../services/geminiService';
 import { useTranslation } from 'react-i18next';
@@ -9,9 +9,12 @@ interface PlanEditorProps {
   project: Project;
   plan: PlanStructure;
   onValidate: (updatedPlan: PlanStructure) => void;
+  user: UserType | null;
+  onUpdateUser: (user: UserType) => void;
+  onShowPricing: () => void;
 }
 
-export default function PlanEditor({ project, plan: initialPlan, onValidate }: PlanEditorProps) {
+export default function PlanEditor({ project, plan: initialPlan, onValidate, user, onUpdateUser, onShowPricing }: PlanEditorProps) {
   const { t } = useTranslation();
   const [plan, setPlan] = useState<PlanStructure>(initialPlan);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -126,8 +129,38 @@ export default function PlanEditor({ project, plan: initialPlan, onValidate }: P
 
   const handleRefinePlan = async () => {
     if (!refinePrompt.trim()) return;
+    if (!user) return;
+
+    if (user.credits < 1) {
+      onShowPricing();
+      return;
+    }
+
     setIsRefiningLoading(true);
     try {
+      // Deduct credits
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      const sid = localStorage.getItem('bayano_sid');
+      if (sid) {
+        headers['Authorization'] = `Bearer ${sid}`;
+      }
+      const deductRes = await fetch('/api/saas/deduct', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ amount: 1, description: `Modification plan IA: ${project.title.substring(0, 20)}...` }),
+        credentials: 'include'
+      });
+      
+      if (deductRes.ok) {
+        const deductData = await deductRes.json();
+        onUpdateUser({ ...user, credits: deductData.remainingCredits });
+      } else {
+        console.error("Erreur de déduction de crédits");
+        alert("Erreur de déduction de crédits");
+        setIsRefiningLoading(false);
+        return;
+      }
+
       const newPlan = await refinePlan(project, plan, refinePrompt);
       setPlan(newPlan);
       setIsRefining(false);

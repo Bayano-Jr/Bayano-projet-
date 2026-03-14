@@ -26,7 +26,6 @@
     "@vitejs/plugin-react": "^5.0.4",
     "bcryptjs": "^3.0.3",
     "connect-pg-simple": "^10.0.0",
-    "connect-sqlite3": "^0.9.16",
     "cors": "^2.8.6",
     "docx": "^9.5.3",
     "dotenv": "^17.2.3",
@@ -52,8 +51,6 @@
     "recharts": "^3.7.0",
     "remark-gfm": "^4.0.1",
     "speakeasy": "^2.0.0",
-    "sqlite": "^5.1.1",
-    "sqlite3": "^5.1.7",
     "vite": "^6.2.0"
   },
   "devDependencies": {

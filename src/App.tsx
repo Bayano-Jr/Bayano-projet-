@@ -187,16 +187,22 @@ export default function App() {
   const handleWizardComplete = async (data: Partial<Project>) => {
     if (!user) return;
 
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const sid = localStorage.getItem('bayano_sid');
+    if (sid) {
+      headers['Authorization'] = `Bearer ${sid}`;
+    }
+
     // Check credits for plan generation
     try {
       const res = await fetch('/api/saas/estimate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ type: 'plan' }),
         credentials: 'include'
       });
       if (res.status === 401) {
-        setUser(null);
+        handleSetUser(null);
         return;
       }
       if (!res.ok) throw new Error("Failed to estimate credits");
@@ -225,7 +231,7 @@ export default function App() {
       // Deduct credits
       const deductRes = await fetch('/api/saas/deduct', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ amount: 2, description: `Génération plan: ${data.title?.substring(0, 20)}...` }),
         credentials: 'include'
       });
@@ -254,7 +260,7 @@ export default function App() {
       setIsGeneratingPlan(false);
       
       if (error.message.includes("Non autorisé")) {
-        setUser(null);
+        handleSetUser(null);
         alert("Votre session a expiré. Veuillez vous reconnecter.");
       } else {
         alert(`Erreur lors de la création du projet: ${error.message || "Veuillez réessayer."}`);
@@ -496,7 +502,12 @@ export default function App() {
               />
             </div>
             {view === 'anti_plagiarism' && (
-              <AntiPlagiarism onBack={() => setView('dashboard')} />
+              <AntiPlagiarism 
+                onBack={() => setView('dashboard')} 
+                user={user}
+                onUpdateUser={setUser}
+                onShowPricing={() => setIsPricingOpen(true)}
+              />
             )}
 
             {view === 'wizard' && (
@@ -513,6 +524,9 @@ export default function App() {
                 project={currentProject}
                 plan={generatedPlan} 
                 onValidate={handlePlanValidate} 
+                user={user}
+                onUpdateUser={setUser}
+                onShowPricing={() => setIsPricingOpen(true)}
               />
             )}
 
@@ -536,6 +550,9 @@ export default function App() {
                 projectId={selectedProjectId} 
                 onBack={() => setView('dashboard')} 
                 onSessionError={handleSessionError}
+                user={user}
+                onUpdateUser={setUser}
+                onShowPricing={() => setIsPricingOpen(true)}
               />
             )}
 
@@ -546,7 +563,11 @@ export default function App() {
             )}
 
             {view === 'chat' && (
-              <ChatAssistant />
+              <ChatAssistant 
+                user={user}
+                onUpdateUser={setUser}
+                onShowPricing={() => setIsPricingOpen(true)}
+              />
             )}
           </>
         )}

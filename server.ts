@@ -1,11 +1,8 @@
 import express from "express";
 import session from "express-session";
 import pgSession from "connect-pg-simple";
-import SQLiteStoreFactory from "connect-sqlite3";
 import bcrypt from "bcryptjs";
 import { Pool } from "pg";
-import sqlite3 from "sqlite3";
-import { open } from "sqlite";
 import cors from "cors";
 import { createServer as createViteServer } from "vite";
 import path from "path";
@@ -13,6 +10,7 @@ import { fileURLToPath } from "url";
 import speakeasy from "speakeasy";
 import QRCode from "qrcode";
 import HTMLtoDOCX from 'html-to-docx';
+import crypto from 'crypto';
 
 declare module "express-session" {
   interface SessionData {
@@ -25,83 +23,54 @@ declare module "express-session" {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const usePostgres = !!process.env.DATABASE_URL;
-
-let pool: Pool | null = null;
-let sqliteDb: any = null;
-
-if (usePostgres) {
-  pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
-  });
-
-  pool.on('error', (err, client) => {
-    console.error('Unexpected error on idle client', err);
-  });
+if (!process.env.DATABASE_URL) {
+  console.error("DATABASE_URL environment variable is required for PostgreSQL.");
+  process.exit(1);
 }
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+});
+
+pool.on('error', (err, client) => {
+  console.error('Unexpected error on idle client', err);
+});
 
 const db = {
   query: async (sql: string, params: any[] = []) => {
-    if (usePostgres && pool) {
-      let i = 1;
-      const pgSql = sql.replace(/\?/g, () => `$${i++}`);
-      return pool.query(pgSql, params);
-    } else if (sqliteDb) {
-      const result = await sqliteDb.all(sql, params);
-      return { rows: result };
-    }
-    return { rows: [] };
+    let i = 1;
+    const pgSql = sql.replace(/\?/g, () => `$${i++}`);
+    return pool.query(pgSql, params);
   },
   get: async (sql: string, ...params: any[]) => {
-    if (usePostgres && pool) {
-      let i = 1;
-      const pgSql = sql.replace(/\?/g, () => `$${i++}`);
-      const res = await pool.query(pgSql, params);
-      return res.rows[0];
-    } else if (sqliteDb) {
-      return sqliteDb.get(sql, ...params);
-    }
+    let i = 1;
+    const pgSql = sql.replace(/\?/g, () => `$${i++}`);
+    const res = await pool.query(pgSql, params);
+    return res.rows[0];
   },
   all: async (sql: string, ...params: any[]) => {
-    if (usePostgres && pool) {
-      let i = 1;
-      const pgSql = sql.replace(/\?/g, () => `$${i++}`);
-      const res = await pool.query(pgSql, params);
-      return res.rows;
-    } else if (sqliteDb) {
-      return sqliteDb.all(sql, ...params);
-    }
-    return [];
+    let i = 1;
+    const pgSql = sql.replace(/\?/g, () => `$${i++}`);
+    const res = await pool.query(pgSql, params);
+    return res.rows;
   },
   run: async (sql: string, ...params: any[]) => {
-    if (usePostgres && pool) {
-      let i = 1;
-      const pgSql = sql.replace(/\?/g, () => `$${i++}`);
-      await pool.query(pgSql, params);
-    } else if (sqliteDb) {
-      await sqliteDb.run(sql, ...params);
-    }
+    let i = 1;
+    const pgSql = sql.replace(/\?/g, () => `$${i++}`);
+    await pool.query(pgSql, params);
   },
   exec: async (sql: string) => {
-    if (usePostgres && pool) {
-      await pool.query(sql);
-    } else if (sqliteDb) {
-      await sqliteDb.exec(sql);
-    }
+    await pool.query(sql);
   },
   prepare: (sql: string) => {
     return {
       run: (...params: any[]) => {
         (async () => {
           try {
-            if (usePostgres && pool) {
-              let i = 1;
-              const pgSql = sql.replace(/\?/g, () => `$${i++}`);
-              await pool.query(pgSql, params);
-            } else if (sqliteDb) {
-              await sqliteDb.run(sql, ...params);
-            }
+            let i = 1;
+            const pgSql = sql.replace(/\?/g, () => `$${i++}`);
+            await pool.query(pgSql, params);
           } catch (err) {
             console.error("Async db.prepare run error:", err);
           }
@@ -114,15 +83,7 @@ const db = {
 // Initialize database
 (async () => {
   try {
-    if (!usePostgres) {
-      sqliteDb = await open({
-        filename: process.env.DB_PATH || 'database.sqlite',
-        driver: sqlite3.Database
-      });
-      console.log("Using SQLite database");
-    } else {
-      console.log("Using PostgreSQL database");
-    }
+    console.log("Using PostgreSQL database");
     await db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
@@ -220,25 +181,11 @@ const db = {
 `);
 
 // Migrations
-try {
-  await db.run("ALTER TABLE projects ADD COLUMN docx_data TEXT");
-} catch (e) {
-  // Column might already exist
-}
-
-try {
-  await db.run("ALTER TABLE users ADD COLUMN plan TEXT DEFAULT 'free'");
-  await db.run("ALTER TABLE users ADD COLUMN credits INTEGER DEFAULT 30");
-  await db.run("ALTER TABLE users ADD COLUMN subscription_expires_at TIMESTAMP");
-} catch (e) {
-  // Columns might already exist
-}
-
-try {
-  await db.run("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'");
-} catch (e) {
-  // Column might already exist
-}
+try { await db.run("ALTER TABLE projects ADD COLUMN docx_data TEXT"); } catch (e) {}
+try { await db.run("ALTER TABLE users ADD COLUMN plan TEXT DEFAULT 'free'"); } catch (e) {}
+try { await db.run("ALTER TABLE users ADD COLUMN credits INTEGER DEFAULT 30"); } catch (e) {}
+try { await db.run("ALTER TABLE users ADD COLUMN subscription_expires_at TIMESTAMP"); } catch (e) {}
+try { await db.run("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'"); } catch (e) {}
 
 const missingColumns = [
   "methodology TEXT",
@@ -282,20 +229,12 @@ async function startServer() {
   });
 
   let sessionStore;
-  if (usePostgres && pool) {
-    const PgStore = pgSession(session);
-    sessionStore = new PgStore({
-      pool: pool,
-      tableName: 'session',
-      createTableIfMissing: true
-    });
-  } else {
-    const SQLiteStore = SQLiteStoreFactory(session);
-    sessionStore = new SQLiteStore({
-      db: process.env.DB_PATH || 'database.sqlite',
-      dir: '.'
-    });
-  }
+  const PgStore = pgSession(session);
+  sessionStore = new PgStore({
+    pool: pool,
+    tableName: 'session',
+    createTableIfMissing: true
+  });
 
   // @ts-ignore
   sessionStore.on?.('error', function(err: any) {
@@ -311,37 +250,48 @@ async function startServer() {
     secret: process.env.SESSION_SECRET || "bayano-secret-v4-final",
     resave: false,
     saveUninitialized: false,
-    rolling: true,
+    rolling: false,
     proxy: true,
     cookie: {
-      secure: isProd,
-      sameSite: isProd ? 'none' : 'lax',
+      secure: true,
+      sameSite: 'none',
       httpOnly: true,
-      maxAge: 1000 * 60 * 60 * 24 * 30, // 30 days
-      partitioned: isProd
+      maxAge: 1000 * 60 * 60 * 24 * 30 // 30 days
     }
   }));
 
   // Session Recovery Middleware (Fallback for blocked cookies in iframes)
   app.use(async (req: any, res: any, next) => {
     const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith('Bearer ') && (!req.session || !req.session.userId)) {
+    if (authHeader && authHeader.startsWith('Bearer ')) {
       const sid = authHeader.split(' ')[1];
-      if (sid && sid !== 'null' && sid !== 'undefined') {
-        sessionStore.get(sid, (err, sessionData) => {
-          if (!err && sessionData) {
-            // Manually attach session data if found
-            req.sessionID = sid;
-            if (req.session) {
-              Object.assign(req.session, sessionData);
+      console.log(`[SessionRecovery] Received Bearer token: ${sid}. Current req.session.userId: ${req.session?.userId}`);
+      if (!req.session || !req.session.userId) {
+        if (sid && sid !== 'null' && sid !== 'undefined') {
+          sessionStore.get(sid, (err, sessionData) => {
+            if (err) {
+              console.error(`[SessionRecovery] Error getting session ${sid}:`, err);
+            } else if (!sessionData) {
+              console.warn(`[SessionRecovery] Session ${sid} not found in store.`);
             } else {
-              req.session = sessionData;
+              // Manually attach session data if found
+              req.sessionID = sid;
+              // Use createSession to properly instantiate Session and Cookie objects
+              if (req.sessionStore && req.sessionStore.createSession) {
+                req.sessionStore.createSession(req, sessionData);
+              } else {
+                if (req.session) {
+                  Object.assign(req.session, sessionData);
+                } else {
+                  req.session = sessionData;
+                }
+              }
+              console.log(`[SessionRecovery] Successfully recovered session ${sid} for user ${req.session?.userId || 'admin'}`);
             }
-            console.log(`[SessionRecovery] Successfully recovered session ${sid} for user ${req.session?.userId || 'admin'}`);
-          }
-          next();
-        });
-        return;
+            next();
+          });
+          return;
+        }
       }
     }
     next();
@@ -1202,13 +1152,9 @@ async function startServer() {
 
   app.get("/api/admin/schema", async (req, res) => {
     try {
-      if (usePostgres && pool) {
-        const tables = await pool.query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'");
-        const columns = await pool.query("SELECT table_name, column_name, data_type FROM information_schema.columns WHERE table_schema = 'public'");
-        res.json({ tables: tables.rows, columns: columns.rows });
-      } else {
-        res.json({ error: "Not using Postgres" });
-      }
+      const tables = await pool.query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'");
+      const columns = await pool.query("SELECT table_name, column_name, data_type FROM information_schema.columns WHERE table_schema = 'public'");
+      res.json({ tables: tables.rows, columns: columns.rows });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -1216,12 +1162,8 @@ async function startServer() {
 
   app.get("/api/admin/sessions", async (req, res) => {
     try {
-      if (usePostgres && pool) {
-        const sessions = await pool.query("SELECT * FROM session");
-        res.json(sessions.rows);
-      } else {
-        res.json({ error: "Not using Postgres" });
-      }
+      const sessions = await pool.query("SELECT * FROM session");
+      res.json(sessions.rows);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

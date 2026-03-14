@@ -57,10 +57,16 @@ export default function GenerationView({ project, user, onUpdateUser, onShowPric
     setError(null);
     
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      const sid = localStorage.getItem('bayano_sid');
+      if (sid) {
+        headers['Authorization'] = `Bearer ${sid}`;
+      }
+
       // Check credits before generating
       const res = await fetch('/api/saas/estimate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ type: 'generation', pages: project.min_pages }),
         credentials: 'include'
       });
@@ -81,7 +87,7 @@ export default function GenerationView({ project, user, onUpdateUser, onShowPric
         // Deduct credits
         const deductRes = await fetch('/api/saas/deduct', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({ amount: estimateData.estimatedCredits, description: `Génération document: ${project.title.substring(0, 20)}...` }),
           credentials: 'include'
         });

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Download, FileText, ArrowLeft, Eye, Edit3, Sparkles, Send, X, Check, RotateCcw, Loader2, Menu, FileDown, Printer, BookOpen } from 'lucide-react';
-import { Project, Chapter } from '../types';
+import { Project, Chapter, User as UserType } from '../types';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import ExportModal, { ExportOptions } from './ExportModal';
@@ -16,9 +16,12 @@ interface ProjectDetailProps {
   projectId: string;
   onBack: () => void;
   onSessionError?: () => void;
+  user: UserType | null;
+  onUpdateUser: (user: UserType) => void;
+  onShowPricing: () => void;
 }
 
-export default function ProjectDetail({ projectId, onBack, onSessionError }: ProjectDetailProps) {
+export default function ProjectDetail({ projectId, onBack, onSessionError, user, onUpdateUser, onShowPricing }: ProjectDetailProps) {
   const { t } = useTranslation();
   const [project, setProject] = useState<(Project & { chapters: Chapter[] }) | null>(null);
   const [loading, setLoading] = useState(true);
@@ -277,9 +280,38 @@ export default function ProjectDetail({ projectId, onBack, onSessionError }: Pro
 
   const handleRefine = async () => {
     if (!project || !currentChapter || !refinePrompt.trim()) return;
+    if (!user) return;
+
+    if (user.credits < 1) {
+      onShowPricing();
+      return;
+    }
     
     setIsRefiningLoading(true);
     try {
+      // Deduct credits
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      const sid = localStorage.getItem('bayano_sid');
+      if (sid) {
+        headers['Authorization'] = `Bearer ${sid}`;
+      }
+      const deductRes = await fetch('/api/saas/deduct', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ amount: 1, description: `Modification contenu IA: ${project.title.substring(0, 20)}...` }),
+        credentials: 'include'
+      });
+      
+      if (deductRes.ok) {
+        const deductData = await deductRes.json();
+        onUpdateUser({ ...user, credits: deductData.remainingCredits });
+      } else {
+        console.error("Erreur de déduction de crédits");
+        alert("Erreur de déduction de crédits");
+        setIsRefiningLoading(false);
+        return;
+      }
+
       const result = await refineContent(project, currentChapter.content, refinePrompt);
       setRefinedContent(result);
     } catch (error) {

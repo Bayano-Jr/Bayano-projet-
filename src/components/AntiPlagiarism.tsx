@@ -10,11 +10,16 @@ import { extractTextFromDocx } from '../utils/docxUtils';
 // Set worker for pdfjs
 pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
 
+import { User as UserType } from '../types';
+
 interface AntiPlagiarismProps {
   onBack: () => void;
+  user: UserType | null;
+  onUpdateUser: (user: UserType) => void;
+  onShowPricing: () => void;
 }
 
-export default function AntiPlagiarism({ onBack }: AntiPlagiarismProps) {
+export default function AntiPlagiarism({ onBack, user, onUpdateUser, onShowPricing }: AntiPlagiarismProps) {
   const { t, i18n } = useTranslation();
   const [inputMode, setInputMode] = useState<'text' | 'file'>('text');
   const [freeText, setFreeText] = useState('');
@@ -78,12 +83,41 @@ export default function AntiPlagiarism({ onBack }: AntiPlagiarismProps) {
       setError(t('antiPlagiarism.errorEmpty'));
       return;
     }
+    if (!user) return;
+
+    if (user.credits < 1) {
+      onShowPricing();
+      return;
+    }
 
     setIsAnalyzing(true);
     setError(null);
     setParaphrasedText(null);
 
     try {
+      // Deduct credits
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      const sid = localStorage.getItem('bayano_sid');
+      if (sid) {
+        headers['Authorization'] = `Bearer ${sid}`;
+      }
+      const deductRes = await fetch('/api/saas/deduct', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ amount: 1, description: `Analyse anti-plagiat IA` }),
+        credentials: 'include'
+      });
+      
+      if (deductRes.ok) {
+        const deductData = await deductRes.json();
+        onUpdateUser({ ...user, credits: deductData.remainingCredits });
+      } else {
+        console.error("Erreur de déduction de crédits");
+        setError("Erreur de déduction de crédits");
+        setIsAnalyzing(false);
+        return;
+      }
+
       const result = await detectAIContent(activeText);
       setAnalysisResult(result);
     } catch (err) {
@@ -99,11 +133,40 @@ export default function AntiPlagiarism({ onBack }: AntiPlagiarismProps) {
       setError(t('antiPlagiarism.errorEmpty'));
       return;
     }
+    if (!user) return;
+
+    if (user.credits < 1) {
+      onShowPricing();
+      return;
+    }
 
     setIsParaphrasing(true);
     setError(null);
 
     try {
+      // Deduct credits
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      const sid = localStorage.getItem('bayano_sid');
+      if (sid) {
+        headers['Authorization'] = `Bearer ${sid}`;
+      }
+      const deductRes = await fetch('/api/saas/deduct', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ amount: 1, description: `Paraphrase anti-plagiat IA` }),
+        credentials: 'include'
+      });
+      
+      if (deductRes.ok) {
+        const deductData = await deductRes.json();
+        onUpdateUser({ ...user, credits: deductData.remainingCredits });
+      } else {
+        console.error("Erreur de déduction de crédits");
+        setError("Erreur de déduction de crédits");
+        setIsParaphrasing(false);
+        return;
+      }
+
       const result = await paraphraseText(activeText, i18n.language);
       setParaphrasedText(result);
     } catch (err) {

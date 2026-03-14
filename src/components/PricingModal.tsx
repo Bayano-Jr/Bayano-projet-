@@ -43,9 +43,15 @@ export default function PricingModal({ user, onClose, onUpdateUser }: PricingMod
     setLoading(true);
     setError('');
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      const sid = localStorage.getItem('bayano_sid');
+      if (sid) {
+        headers['Authorization'] = `Bearer ${sid}`;
+      }
+
       const res = await fetch('/api/saas/subscribe', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ plan }),
         credentials: 'include'
       });
@@ -73,9 +79,15 @@ export default function PricingModal({ user, onClose, onUpdateUser }: PricingMod
     setLoading(true);
     setError('');
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      const sid = localStorage.getItem('bayano_sid');
+      if (sid) {
+        headers['Authorization'] = `Bearer ${sid}`;
+      }
+
       const res = await fetch('/api/saas/buy-credits', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ pack }),
         credentials: 'include'
       });
