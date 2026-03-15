@@ -7,7 +7,19 @@ let aiClient: GoogleGenAI | null = null;
 
 export const getAiClient = async (): Promise<GoogleGenAI> => {
   if (!aiClient) {
-    const key = process.env.GEMINI_API_KEY as string;
+    let key = process.env.GEMINI_API_KEY as string;
+
+    if (!key || key === "undefined") {
+      try {
+        const response = await fetch('/api/config');
+        if (response.ok) {
+          const data = await response.json();
+          key = data.geminiApiKey;
+        }
+      } catch (e) {
+        console.error("Failed to fetch config", e);
+      }
+    }
 
     if (!key || key === "undefined") {
       throw new Error('GEMINI_API_KEY environment variable is required');
