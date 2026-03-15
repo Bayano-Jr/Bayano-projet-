@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Shield, ShieldCheck, ShieldAlert, Loader2, CheckCircle2, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { User } from '../types';
+import { useAlert } from '../contexts/AlertContext';
 
 interface TwoFactorSetupProps {
   user: User;
@@ -10,6 +11,7 @@ interface TwoFactorSetupProps {
 }
 
 export default function TwoFactorSetup({ user, onUpdate, onClose }: TwoFactorSetupProps) {
+  const { showConfirm } = useAlert();
   const [step, setStep] = useState<'initial' | 'setup' | 'verify'>('initial');
   const [qrCodeUrl, setQrCodeUrl] = useState('');
   const [secret, setSecret] = useState('');
@@ -62,18 +64,25 @@ export default function TwoFactorSetup({ user, onUpdate, onClose }: TwoFactorSet
   };
 
   const handleDisable = async () => {
-    if (!window.confirm('Voulez-vous vraiment désactiver la double authentification ?')) return;
-    setLoading(true);
-    try {
-      const response = await fetch('/api/auth/2fa/disable', { method: 'POST', credentials: 'include' });
-      if (response.ok) {
-        onUpdate({ ...user, twoFactorEnabled: false });
+    showConfirm({
+      title: 'Désactiver la 2FA',
+      message: 'Voulez-vous vraiment désactiver la double authentification ?',
+      confirmText: 'Désactiver',
+      type: 'warning',
+      onConfirm: async () => {
+        setLoading(true);
+        try {
+          const response = await fetch('/api/auth/2fa/disable', { method: 'POST', credentials: 'include' });
+          if (response.ok) {
+            onUpdate({ ...user, twoFactorEnabled: false });
+          }
+        } catch (err) {
+          setError('Erreur réseau');
+        } finally {
+          setLoading(false);
+        }
       }
-    } catch (err) {
-      setError('Erreur réseau');
-    } finally {
-      setLoading(false);
-    }
+    });
   };
 
   return (

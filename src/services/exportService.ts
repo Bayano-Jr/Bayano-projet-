@@ -602,6 +602,6 @@ export const exportToPDF = async (project: Project, elementId: string) => {
     await html2pdf().from(clone).set(opt).save();
   } catch (error) {
     console.error("Export pdf failed:", error);
-    alert("L'exportation PDF a échoué. Veuillez utiliser le bouton 'Imprimer' à la place.");
+    throw new Error("L'exportation PDF a échoué. Veuillez utiliser le bouton 'Imprimer' à la place.");
   }
 };

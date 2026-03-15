@@ -6,6 +6,7 @@ import * as pdfjs from 'pdfjs-dist';
 import { Document, Packer, Paragraph, TextRun } from 'docx';
 import { detectAIContent, paraphraseText } from '../services/geminiService';
 import { extractTextFromDocx } from '../utils/docxUtils';
+import { useAlert } from '../contexts/AlertContext';
 
 // Set worker for pdfjs
 pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
@@ -20,6 +21,7 @@ interface AntiPlagiarismProps {
 }
 
 export default function AntiPlagiarism({ onBack, user, onUpdateUser, onShowPricing }: AntiPlagiarismProps) {
+  const { showAlert } = useAlert();
   const { t, i18n } = useTranslation();
   const [inputMode, setInputMode] = useState<'text' | 'file'>('text');
   const [freeText, setFreeText] = useState('');
@@ -209,7 +211,7 @@ export default function AntiPlagiarism({ onBack, user, onUpdateUser, onShowPrici
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error("Error generating DOCX:", err);
-      alert("Erreur lors de la création du fichier DOCX.");
+      showAlert({ message: "Erreur lors de la création du fichier DOCX.", type: 'error' });
     }
   };
 

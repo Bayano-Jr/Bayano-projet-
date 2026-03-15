@@ -7,12 +7,14 @@ import AdminUsers from './AdminUsers';
 import AdminPricing from './AdminPricing';
 import AdminDashboard from './AdminDashboard';
 import AdminErrors from './AdminErrors';
+import { useAlert } from '../contexts/AlertContext';
 
 interface AdminBackofficeProps {
   onClose: () => void;
 }
 
 export default function AdminBackoffice({ onClose }: AdminBackofficeProps) {
+  const { showAlert, showConfirm } = useAlert();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [password, setPassword] = useState('');
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -88,24 +90,30 @@ export default function AdminBackoffice({ onClose }: AdminBackofficeProps) {
     } catch (err: any) {
       console.error("Save error:", err);
       setSaveStatus('error');
-      alert(err.message || "Erreur lors de l'enregistrement");
+      showAlert({ message: err.message || "Erreur lors de l'enregistrement", type: 'error' });
     }
   };
 
   const resetToDefaults = async () => {
-    if (window.confirm("Voulez-vous vraiment réinitialiser tous les réglages par défaut ?")) {
-      const defaultSettings: AppSettings = {
-        adminPassword: 'admin',
-        aiModel: 'gemini-3.1-pro-preview',
-        systemInstruction: "Tu es un expert en rédaction académique. Ton rôle est de rédiger des mémoires de haute qualité, structurés, avec un ton formel et des références précises.",
-        appName: 'Bayano Académie',
-        appSlogan: 'Excellence & IA'
-      };
-      setSettings(defaultSettings);
-      await storageService.saveSettings(defaultSettings);
-      setSaveStatus('success');
-      setTimeout(() => setSaveStatus('idle'), 3000);
-    }
+    showConfirm({
+      title: 'Réinitialiser les réglages',
+      message: 'Voulez-vous vraiment réinitialiser tous les réglages par défaut ?',
+      confirmText: 'Réinitialiser',
+      type: 'warning',
+      onConfirm: async () => {
+        const defaultSettings: AppSettings = {
+          adminPassword: 'admin',
+          aiModel: 'gemini-3.1-pro-preview',
+          systemInstruction: "Tu es un expert en rédaction académique. Ton rôle est de rédiger des mémoires de haute qualité, structurés, avec un ton formel et des références précises.",
+          appName: 'Bayano Académie',
+          appSlogan: 'Excellence & IA'
+        };
+        setSettings(defaultSettings);
+        await storageService.saveSettings(defaultSettings);
+        setSaveStatus('success');
+        setTimeout(() => setSaveStatus('idle'), 3000);
+      }
+    });
   };
 
   if (!settings) return null;

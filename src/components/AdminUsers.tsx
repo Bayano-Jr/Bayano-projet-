@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Users, Edit2, Save, X, Search, ShieldAlert, Trash2, Ban, AlertOctagon } from 'lucide-react';
 import { User } from '../types';
+import { useAlert } from '../contexts/AlertContext';
 
 export default function AdminUsers() {
+  const { showAlert, showConfirm } = useAlert();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -64,29 +66,36 @@ export default function AdminUsers() {
       setUsers(users.map(u => u.id === user.id ? user : u));
       setEditingUser(null);
     } catch (err) {
-      alert('Erreur lors de la mise à jour de l\'utilisateur');
+      showAlert({ message: 'Erreur lors de la mise à jour de l\'utilisateur', type: 'error' });
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Êtes-vous sûr de vouloir supprimer cet utilisateur ?')) return;
-    try {
-      const headers: Record<string, string> = {};
-      const sid = localStorage.getItem('bayano_sid');
-      if (sid) {
-        headers['Authorization'] = `Bearer ${sid}`;
+    showConfirm({
+      title: 'Supprimer l\'utilisateur',
+      message: 'Êtes-vous sûr de vouloir supprimer cet utilisateur ?',
+      confirmText: 'Supprimer',
+      type: 'error',
+      onConfirm: async () => {
+        try {
+          const headers: Record<string, string> = {};
+          const sid = localStorage.getItem('bayano_sid');
+          if (sid) {
+            headers['Authorization'] = `Bearer ${sid}`;
+          }
+          
+          const res = await fetch(`/api/admin/users/${id}`, {
+            method: 'DELETE',
+            headers,
+            credentials: 'include'
+          });
+          if (!res.ok) throw new Error('Erreur lors de la suppression');
+          setUsers(users.filter(u => u.id !== id));
+        } catch (err) {
+          showAlert({ message: 'Erreur lors de la suppression de l\'utilisateur', type: 'error' });
+        }
       }
-      
-      const res = await fetch(`/api/admin/users/${id}`, {
-        method: 'DELETE',
-        headers,
-        credentials: 'include'
-      });
-      if (!res.ok) throw new Error('Erreur lors de la suppression');
-      setUsers(users.filter(u => u.id !== id));
-    } catch (err) {
-      alert('Erreur lors de la suppression de l\'utilisateur');
-    }
+    });
   };
 
   const filteredUsers = users.filter(u => 

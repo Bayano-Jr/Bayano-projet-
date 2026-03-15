@@ -7,25 +7,7 @@ let aiClient: GoogleGenAI | null = null;
 
 export const getAiClient = async (): Promise<GoogleGenAI> => {
   if (!aiClient) {
-    let key = "";
-    
-    // Always try to fetch from backend first to ensure we get the runtime key (e.g. from Cloud Run)
-    try {
-      const response = await fetch('/api/config/gemini');
-      if (response.ok) {
-        const data = await response.json();
-        if (data.apiKey) {
-          key = data.apiKey;
-        }
-      }
-    } catch (error) {
-      console.error("Failed to fetch Gemini API key from backend:", error);
-    }
-
-    // Fallback to build-time injected key if backend fetch fails or returns empty
-    if (!key || key === "undefined") {
-      key = process.env.GEMINI_API_KEY as string;
-    }
+    const key = process.env.GEMINI_API_KEY as string;
 
     if (!key || key === "undefined") {
       throw new Error('GEMINI_API_KEY environment variable is required');
@@ -585,5 +567,75 @@ CONSIGNES STRICTES DE REFORMULATION:
   } catch (error: any) {
     console.error("Error paraphrasing text:", error);
     throw new Error(error.message || "Échec de la paraphrase du texte");
+  }
+};
+
+export const verifySource = async (sourceText: string, projectContext?: string): Promise<{ isReliable: boolean; score: number; explanation: string; provenance: string; relevance: string; type: string }> => {
+  const contextPrompt = projectContext ? `\nCONTEXTE DU TRAVAIL:\n${projectContext}\n` : '';
+  const prompt = `En tant qu'expert en recherche académique et bibliothécaire universitaire, évalue la fiabilité, la crédibilité, la provenance et la pertinence de la source suivante.
+
+SOURCE À ANALYSER:
+---
+${sourceText}
+---
+${contextPrompt}
+INSTRUCTIONS:
+Analyse cette source selon les critères académiques (auteur, éditeur, date, type de publication, objectivité, comité de lecture).
+Renvoie UNIQUEMENT un objet JSON valide avec la structure suivante, sans aucun autre texte :
+{
+  "isReliable": boolean (true si la source est académiquement acceptable, false sinon),
+  "score": number (de 0 à 100, représentant le degré de fiabilité),
+  "explanation": string (une explication courte et précise justifiant l'évaluation),
+  "provenance": string (une explication détaillée de la provenance de la note/source, d'où elle vient, qui l'a publiée),
+  "relevance": string (le lien entre cette source et le contexte du travail, comment elle s'y rapporte, ou "Non applicable" si pas de contexte fourni),
+  "type": string (le type de source détecté : "Article scientifique", "Livre", "Site web institutionnel", "Blog", "Article de presse", "Inconnu", etc.)
+}`;
+
+  try {
+    const response = await generateContentWithRetry({
+      model: await getModel(),
+      contents: prompt,
+      config: {
+        temperature: 0.1,
+        responseMimeType: "application/json",
+      }
+    });
+    
+    const text = response.text || "{}";
+    const cleanedText = text.replace(/```json\n?|\n?```/g, '').trim();
+    return JSON.parse(cleanedText);
+  } catch (error) {
+    console.error("Error verifying source:", error);
+    return { isReliable: false, score: 0, explanation: "Erreur lors de l'analyse de la source.", provenance: "Inconnue", relevance: "Inconnue", type: "Inconnu" };
+  }
+};
+
+export const generateCitation = async (
+  data: { author?: string; title?: string; year?: string; publisher?: string; url?: string; type?: string },
+  format: 'APA' | 'MLA' | 'Chicago' | 'Harvard'
+): Promise<string> => {
+  const prompt = `Génère une citation bibliographique parfaitement formatée selon la norme ${format}.
+  
+DONNÉES DE LA SOURCE:
+${JSON.stringify(data, null, 2)}
+
+INSTRUCTIONS:
+1. Formate la citation exactement selon les règles de la norme ${format}.
+2. Si des informations manquent, fais de ton mieux avec ce qui est fourni (ex: "s.d." pour sans date).
+3. Ne renvoie QUE la citation formatée, sans aucun autre texte, commentaire ou guillemets.`;
+
+  try {
+    const response = await generateContentWithRetry({
+      model: await getModel(),
+      contents: prompt,
+      config: {
+        temperature: 0.1,
+      }
+    });
+    
+    return response.text?.trim() || "";
+  } catch (error) {
+    console.error("Error generating citation:", error);
+    return "Erreur lors de la génération de la citation.";
   }
 };

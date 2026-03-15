@@ -3,6 +3,7 @@ import { ArrowLeft, ArrowRight, Sparkles, Upload, FileText, X, Loader2, Lock } f
 import { motion, AnimatePresence } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { Project, User } from '../types';
+import { useAlert } from '../contexts/AlertContext';
 import * as pdfjs from 'pdfjs-dist';
 import { extractTextFromDocx } from '../utils/docxUtils';
 
@@ -19,6 +20,7 @@ interface ProjectWizardProps {
 import i18n from '../i18n';
 
 export default function ProjectWizard({ user, onCancel, onComplete, onShowPricing }: ProjectWizardProps) {
+  const { showAlert } = useAlert();
   const { t } = useTranslation();
   const [step, setStep] = useState(1);
   const [isParsing, setIsParsing] = useState(false);
@@ -77,7 +79,7 @@ export default function ProjectWizard({ user, onCancel, onComplete, onShowPricin
       }
     } catch (error) {
       console.error("Error parsing file:", error);
-      alert("Erreur lors de la lecture du fichier. Assurez-vous qu'il s'agit d'un PDF ou DOCX valide.");
+      showAlert({ message: "Erreur lors de la lecture du fichier. Assurez-vous qu'il s'agit d'un PDF ou DOCX valide.", type: 'error' });
     } finally {
       setIsParsing(false);
     }

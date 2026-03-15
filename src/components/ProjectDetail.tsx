@@ -1,16 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Download, FileText, ArrowLeft, Eye, Edit3, Sparkles, Send, X, Check, RotateCcw, Loader2, Menu, FileDown, Printer, BookOpen } from 'lucide-react';
+import { Download, FileText, ArrowLeft, Eye, Edit3, Sparkles, Send, X, Check, RotateCcw, Loader2, Menu, FileDown, Printer, BookOpen, AlertTriangle, Search } from 'lucide-react';
 import { Project, Chapter, User as UserType } from '../types';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import ExportModal, { ExportOptions } from './ExportModal';
 import AcademicGuide from './AcademicGuide';
+import CitationManager from './CitationManager';
 import { storageService } from '../services/storageService';
-import { refineContent } from '../services/geminiService';
+import { refineContent, verifySource } from '../services/geminiService';
 import { exportToDOCX, exportToPDF, downloadDOCX } from '../services/exportService';
 import { useTranslation } from 'react-i18next';
 import { convertDocxToHtml } from '../utils/docxUtils';
+import { useAlert } from '../contexts/AlertContext';
 
 interface ProjectDetailProps {
   projectId: string;
@@ -22,6 +24,7 @@ interface ProjectDetailProps {
 }
 
 export default function ProjectDetail({ projectId, onBack, onSessionError, user, onUpdateUser, onShowPricing }: ProjectDetailProps) {
+  const { showAlert } = useAlert();
   const { t } = useTranslation();
   const [project, setProject] = useState<(Project & { chapters: Chapter[] }) | null>(null);
   const [loading, setLoading] = useState(true);
@@ -35,6 +38,10 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
+  const [isCitationManagerOpen, setIsCitationManagerOpen] = useState(false);
+  const [selectedFootnote, setSelectedFootnote] = useState<{id: string, text: string} | null>(null);
+  const [isVerifyingFootnote, setIsVerifyingFootnote] = useState(false);
+  const [footnoteVerification, setFootnoteVerification] = useState<any>(null);
   const [wordPreviewHtml, setWordPreviewHtml] = useState<string | null>(null);
   const [isWordPreviewLoading, setIsWordPreviewLoading] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -156,7 +163,7 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
     if (!project) return;
     
     if (!project.chapters || project.chapters.length === 0) {
-      alert(t('projectDetail.noChaptersExport'));
+      showAlert({ message: t('projectDetail.noChaptersExport'), type: 'warning' });
       return;
     }
     
@@ -165,7 +172,7 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
 
   const handleDownloadStoredWord = () => {
     if (!project?.docx_data) {
-      alert(t('projectDetail.noStoredWord'));
+      showAlert({ message: t('projectDetail.noStoredWord'), type: 'warning' });
       return;
     }
 
@@ -188,13 +195,13 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
       window.URL.revokeObjectURL(url);
     } catch (err) {
       console.error("Error downloading stored Word:", err);
-      alert(t('projectDetail.downloadError'));
+      showAlert({ message: t('projectDetail.downloadError'), type: 'error' });
     }
   };
 
   const handlePreviewWord = async () => {
     if (!project?.docx_data) {
-      alert(t('projectDetail.noWordPreview'));
+      showAlert({ message: t('projectDetail.noWordPreview'), type: 'warning' });
       return;
     }
 
@@ -218,7 +225,7 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
       }
     } catch (err) {
       console.error("Mammoth conversion error:", err);
-      alert(t('projectDetail.previewError'));
+      showAlert({ message: t('projectDetail.previewError'), type: 'error' });
     } finally {
       setIsWordPreviewLoading(false);
     }
@@ -240,7 +247,11 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
       await new Promise(resolve => setTimeout(resolve, 800));
     }
 
-    await exportToPDF(project, 'manuscript-content');
+    try {
+      await exportToPDF(project, 'manuscript-content');
+    } catch (err: any) {
+      showAlert({ message: err.message || "L'exportation PDF a échoué.", type: 'error' });
+    }
   };
 
   if (loading) return (
@@ -307,7 +318,7 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
         onUpdateUser({ ...user, credits: deductData.remainingCredits });
       } else {
         console.error("Erreur de déduction de crédits");
-        alert("Erreur de déduction de crédits");
+        showAlert({ message: "Erreur de déduction de crédits", type: 'error' });
         setIsRefiningLoading(false);
         return;
       }
@@ -316,7 +327,7 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
       setRefinedContent(result);
     } catch (error) {
       console.error("Refinement error:", error);
-      alert(t('projectDetail.refineError'));
+      showAlert({ message: t('projectDetail.refineError'), type: 'error' });
     } finally {
       setIsRefiningLoading(false);
     }
@@ -356,9 +367,31 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
       setIsEditing(false);
     } catch (err) {
       console.error("Error saving edit:", err);
-      alert(t('projectDetail.saveError'));
+      showAlert({ message: t('projectDetail.saveError'), type: 'error' });
     } finally {
       setIsSavingEdit(false);
+    }
+  };
+
+  const handleFootnoteClick = async (href: string) => {
+    const id = href.replace('#', '');
+    const element = document.getElementById(id);
+    if (element) {
+      // Extract text content, removing the return link character (usually ↩)
+      const text = element.innerText.replace('↩', '').trim();
+      setSelectedFootnote({ id, text });
+      setFootnoteVerification(null);
+      setIsVerifyingFootnote(true);
+      
+      try {
+        const projectContext = project ? `Sujet: ${project.title}, Domaine: ${project.field}, Type: ${project.documentType}` : '';
+        const result = await verifySource(text, projectContext);
+        setFootnoteVerification(result);
+      } catch (error) {
+        console.error("Error verifying footnote:", error);
+      } finally {
+        setIsVerifyingFootnote(false);
+      }
     }
   };
 
@@ -373,7 +406,7 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
       setIsEditingWordPreview(false);
     } catch (err) {
       console.error("Error saving word preview:", err);
-      alert(t('projectDetail.saveError'));
+      showAlert({ message: t('projectDetail.saveError'), type: 'error' });
     } finally {
       setIsSavingWordPreview(false);
     }
@@ -488,6 +521,14 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
           </button>
           
           <button 
+            onClick={() => setIsCitationManagerOpen(true)}
+            className="bg-academic-900/10 hover:bg-academic-900/20 text-academic-900 w-full justify-center py-4 rounded-2xl border-none flex items-center gap-3 text-xs font-bold uppercase tracking-widest transition-all mb-4"
+          >
+            <FileText size={16} />
+            Citations & Sources
+          </button>
+          
+          <button 
             onClick={() => setIsExportModalOpen(true)}
             className="bg-academic-900 hover:bg-academic-800 text-white w-full justify-center py-5 rounded-2xl shadow-2xl shadow-academic-900/20 border-none flex items-center gap-3 text-xs font-bold uppercase tracking-widest transition-all"
           >
@@ -508,7 +549,11 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
             onClick={() => {
               const count = project.chapters?.length || 0;
               const words = project.chapters?.reduce((acc, c) => acc + (c.content?.length || 0), 0) || 0;
-              alert(`Diagnostic:\n- Chapitres trouvés: ${count}\n- Volume total: ${words} caractères\n- Status: ${project.status}\n\nSi vous ne voyez rien, essayez le bouton 'Actualiser' en haut.`);
+              showAlert({ 
+                title: 'Diagnostic', 
+                message: `- Chapitres trouvés: ${count}\n- Volume total: ${words} caractères\n- Status: ${project.status}\n\nSi vous ne voyez rien, essayez le bouton 'Actualiser' en haut.`,
+                type: 'info'
+              });
             }}
             className="w-full py-2 text-[9px] text-slate-300 hover:text-slate-500 uppercase tracking-widest font-bold transition-colors"
           >
@@ -533,6 +578,113 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
         isOpen={isGuideOpen} 
         onClose={() => setIsGuideOpen(false)} 
       />
+
+      <CitationManager
+        isOpen={isCitationManagerOpen}
+        onClose={() => setIsCitationManagerOpen(false)}
+      />
+
+      <AnimatePresence>
+        {selectedFootnote && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setSelectedFootnote(null)}
+              className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+            />
+            
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              <div className="flex items-center justify-between p-4 sm:p-6 border-b border-slate-100 bg-slate-50/50 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-accent text-white flex items-center justify-center shadow-lg shrink-0">
+                    <BookOpen size={20} />
+                  </div>
+                  <div>
+                    <h2 className="text-lg sm:text-xl font-serif font-bold text-academic-900">Note de bas de page</h2>
+                    <p className="text-[10px] sm:text-xs text-slate-500 uppercase tracking-widest font-medium mt-1">Détails de la source</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setSelectedFootnote(null)}
+                  className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition-colors shrink-0"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="p-4 sm:p-6 overflow-y-auto">
+                <div className="p-3 sm:p-4 bg-slate-50 rounded-xl border border-slate-100 mb-4 sm:mb-6">
+                  <p className="text-xs sm:text-sm text-slate-700 leading-relaxed">{selectedFootnote.text}</p>
+                </div>
+
+                {isVerifyingFootnote ? (
+                  <div className="flex flex-col items-center justify-center py-8 text-slate-400">
+                    <Loader2 size={32} className="animate-spin mb-4 text-accent" />
+                    <p className="text-xs sm:text-sm font-medium uppercase tracking-widest text-center">Analyse de la source en cours...</p>
+                  </div>
+                ) : footnoteVerification ? (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className={`p-4 sm:p-5 rounded-xl border ${footnoteVerification.isReliable ? 'bg-emerald-50 border-emerald-100' : 'bg-amber-50 border-amber-100'}`}
+                  >
+                    <div className="flex flex-col sm:flex-row items-start gap-3 sm:gap-4">
+                      <div className={`p-2 sm:p-3 rounded-full shrink-0 self-start ${footnoteVerification.isReliable ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}>
+                        {footnoteVerification.isReliable ? <Check size={20} className="sm:w-6 sm:h-6" /> : <AlertTriangle size={20} className="sm:w-6 sm:h-6" />}
+                      </div>
+                      <div className="space-y-3 sm:space-y-4 w-full">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-1">
+                            <h3 className={`font-bold text-sm sm:text-base ${footnoteVerification.isReliable ? 'text-emerald-800' : 'text-amber-800'}`}>
+                              {footnoteVerification.isReliable ? 'Source Fiable' : 'Source Douteuse ou Non Académique'}
+                            </h3>
+                            <span className={`text-[10px] sm:text-xs font-bold px-2 py-1 rounded-full ${footnoteVerification.isReliable ? 'bg-emerald-200 text-emerald-800' : 'bg-amber-200 text-amber-800'}`}>
+                              Score: {footnoteVerification.score}/100
+                            </span>
+                          </div>
+                          <p className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-slate-500">Type: {footnoteVerification.type}</p>
+                        </div>
+                        
+                        <div>
+                          <p className="text-[9px] sm:text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Évaluation</p>
+                          <p className={`text-xs sm:text-sm ${footnoteVerification.isReliable ? 'text-emerald-700' : 'text-amber-700'}`}>
+                            {footnoteVerification.explanation}
+                          </p>
+                        </div>
+                        
+                        {footnoteVerification.provenance && footnoteVerification.provenance !== "Inconnue" && (
+                          <div>
+                            <p className="text-[9px] sm:text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Provenance</p>
+                            <p className="text-xs sm:text-sm text-slate-700">
+                              {footnoteVerification.provenance}
+                            </p>
+                          </div>
+                        )}
+
+                        {footnoteVerification.relevance && footnoteVerification.relevance !== "Inconnue" && footnoteVerification.relevance !== "Non applicable" && (
+                          <div>
+                            <p className="text-[9px] sm:text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Pertinence avec le sujet</p>
+                            <p className="text-xs sm:text-sm text-slate-700">
+                              {footnoteVerification.relevance}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </motion.div>
+                ) : null}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto bg-gray-50 flex flex-col">
@@ -579,20 +731,20 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
 
         <div className="p-4 md:p-16 flex-1">
           {project.status === 'generating' && (
-            <div className="max-w-4xl mx-auto mb-8 bg-accent/10 border border-accent/20 p-6 rounded-3xl flex items-center justify-between gap-4">
-              <div className="flex items-center gap-4">
-                <div className="w-10 h-10 bg-accent rounded-2xl flex items-center justify-center text-white">
+            <div className="max-w-4xl mx-auto mb-8 bg-accent/10 border border-accent/20 p-4 sm:p-6 rounded-2xl sm:rounded-3xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-start sm:items-center gap-3 sm:gap-4">
+                <div className="w-8 h-8 sm:w-10 sm:h-10 bg-accent rounded-xl sm:rounded-2xl flex items-center justify-center text-white shrink-0">
                   <Loader2 className="animate-spin" size={20} />
                 </div>
                 <div>
-                  <h4 className="font-bold text-academic-900">{t('projectDetail.generating')}</h4>
-                  <p className="text-xs text-slate-500 font-medium">Le manuscrit s'enrichit automatiquement. Vous pouvez déjà consulter les parties terminées.</p>
+                  <h4 className="font-bold text-academic-900 text-sm sm:text-base">{t('projectDetail.generating')}</h4>
+                  <p className="text-[10px] sm:text-xs text-slate-500 font-medium mt-0.5 sm:mt-1">Le manuscrit s'enrichit automatiquement. Vous pouvez déjà consulter les parties terminées.</p>
                 </div>
               </div>
-              <div className="text-right">
-                <div className="text-xs font-bold text-accent uppercase tracking-widest mb-1">Volume actuel</div>
-                <div className="text-xl font-serif text-academic-900">
-                  {project.chapters.reduce((acc, c) => acc + (c.word_count || 0), 0).toLocaleString()} <span className="text-sm text-slate-400">mots</span>
+              <div className="text-left sm:text-right w-full sm:w-auto border-t sm:border-t-0 border-accent/10 pt-3 sm:pt-0 mt-2 sm:mt-0">
+                <div className="text-[10px] sm:text-xs font-bold text-accent uppercase tracking-widest mb-1">Volume actuel</div>
+                <div className="text-lg sm:text-xl font-serif text-academic-900">
+                  {project.chapters.reduce((acc, c) => acc + (c.word_count || 0), 0).toLocaleString()} <span className="text-xs sm:text-sm text-slate-400">mots</span>
                 </div>
               </div>
             </div>
@@ -824,7 +976,28 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
                       <div className="min-h-[200px]">
                         <h1 className="text-4xl md:text-5xl font-serif font-semibold mb-12 text-academic-900">{ch.title}</h1>
                         {ch.content ? (
-                          <Markdown remarkPlugins={[remarkGfm]}>{ch.content}</Markdown>
+                          <Markdown 
+                            remarkPlugins={[remarkGfm]}
+                            components={{
+                              a: ({node, ...props}) => {
+                                if (props.href?.startsWith('#user-content-fn-')) {
+                                  return (
+                                    <a 
+                                      {...props} 
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        handleFootnoteClick(props.href!);
+                                      }}
+                                      className="text-accent hover:underline cursor-pointer"
+                                    />
+                                  );
+                                }
+                                return <a {...props} />;
+                              }
+                            }}
+                          >
+                            {ch.content}
+                          </Markdown>
                         ) : (
                           <div className="p-12 bg-slate-50 rounded-3xl border border-slate-100 text-center">
                             <Loader2 className="animate-spin mx-auto mb-4 text-slate-200" size={32} />
@@ -1005,7 +1178,28 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
                         </div>
                       </div>
                     ) : currentChapter.content ? (
-                      <Markdown remarkPlugins={[remarkGfm]}>{currentChapter.content}</Markdown>
+                      <Markdown 
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          a: ({node, ...props}) => {
+                            if (props.href?.startsWith('#user-content-fn-')) {
+                              return (
+                                <a 
+                                  {...props} 
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    handleFootnoteClick(props.href!);
+                                  }}
+                                  className="text-accent hover:underline cursor-pointer"
+                                />
+                              );
+                            }
+                            return <a {...props} />;
+                          }
+                        }}
+                      >
+                        {currentChapter.content}
+                      </Markdown>
                     ) : (
                       <div className="flex flex-col items-center justify-center py-20 text-slate-300">
                         <Loader2 size={40} className="animate-spin mb-4 opacity-20" />

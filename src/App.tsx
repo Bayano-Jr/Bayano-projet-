@@ -16,12 +16,14 @@ import { generatePlan } from './services/geminiService';
 import { storageService } from './services/storageService';
 import { BookOpen, Sparkles, Shield, LogOut, Settings as SettingsIcon, MessageSquare, Search } from 'lucide-react';
 import i18n from './i18n';
+import { useAlert } from './contexts/AlertContext';
 
 type View = 'dashboard' | 'wizard' | 'plan_editor' | 'generation' | 'detail' | 'admin' | 'chat' | 'anti_plagiarism';
 
 import { ErrorBoundary } from './components/ErrorBoundary';
 
 export default function App() {
+  const { showAlert } = useAlert();
   const [view, setView] = useState<View>('dashboard');
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [currentProject, setCurrentProject] = useState<Project | null>(null);
@@ -214,7 +216,7 @@ export default function App() {
       }
     } catch (err) {
       console.error("Error checking credits:", err);
-      alert("Erreur lors de la vérification des crédits.");
+      showAlert({ message: "Erreur lors de la vérification des crédits.", type: 'error' });
       return;
     }
 
@@ -261,9 +263,9 @@ export default function App() {
       
       if (error.message.includes("Non autorisé")) {
         handleSetUser(null);
-        alert("Votre session a expiré. Veuillez vous reconnecter.");
+        showAlert({ message: "Votre session a expiré. Veuillez vous reconnecter.", type: 'warning' });
       } else {
-        alert(`Erreur lors de la création du projet: ${error.message || "Veuillez réessayer."}`);
+        showAlert({ message: `Erreur lors de la création du projet: ${error.message || "Veuillez réessayer."}`, type: 'error' });
       }
     }
   };
@@ -277,7 +279,7 @@ export default function App() {
       setView('generation');
     } catch (error: any) {
       console.error("Error validating plan:", error);
-      alert(`Erreur lors de la validation du plan: ${error.message}`);
+      showAlert({ message: `Erreur lors de la validation du plan: ${error.message}`, type: 'error' });
     }
   };
 
@@ -289,8 +291,8 @@ export default function App() {
     handleSetUser(null);
     setView('dashboard');
     // Use a ref or state to prevent multiple alerts
-    alert("Votre session a expiré. Veuillez vous reconnecter.");
-  }, []);
+    showAlert({ message: "Votre session a expiré. Veuillez vous reconnecter.", type: 'warning' });
+  }, [showAlert]);
 
   if (isAuthLoading || !settings) {
     return (

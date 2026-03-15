@@ -4,6 +4,7 @@ import { PlanStructure, Project, User as UserType } from '../types';
 import { motion, Reorder } from 'motion/react';
 import { refinePlan } from '../services/geminiService';
 import { useTranslation } from 'react-i18next';
+import { useAlert } from '../contexts/AlertContext';
 
 interface PlanEditorProps {
   project: Project;
@@ -15,6 +16,7 @@ interface PlanEditorProps {
 }
 
 export default function PlanEditor({ project, plan: initialPlan, onValidate, user, onUpdateUser, onShowPricing }: PlanEditorProps) {
+  const { showAlert } = useAlert();
   const { t } = useTranslation();
   const [plan, setPlan] = useState<PlanStructure>(initialPlan);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -156,7 +158,7 @@ export default function PlanEditor({ project, plan: initialPlan, onValidate, use
         onUpdateUser({ ...user, credits: deductData.remainingCredits });
       } else {
         console.error("Erreur de déduction de crédits");
-        alert("Erreur de déduction de crédits");
+        showAlert({ message: "Erreur de déduction de crédits", type: 'error' });
         setIsRefiningLoading(false);
         return;
       }
@@ -167,7 +169,7 @@ export default function PlanEditor({ project, plan: initialPlan, onValidate, use
       setRefinePrompt("");
     } catch (error) {
       console.error("Plan refinement error:", error);
-      alert(t('planEditor.refineError'));
+      showAlert({ message: t('planEditor.refineError'), type: 'error' });
     } finally {
       setIsRefiningLoading(false);
     }

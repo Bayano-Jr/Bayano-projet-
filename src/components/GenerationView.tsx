@@ -6,6 +6,7 @@ import { generateChapterContent, generateFrontMatter } from '../services/geminiS
 import { storageService } from '../services/storageService';
 import { exportToDOCX, downloadDOCX, generateDOCXBase64 } from '../services/exportService';
 import { useTranslation } from 'react-i18next';
+import { useAlert } from '../contexts/AlertContext';
 
 interface GenerationViewProps {
   project: Project;
@@ -18,6 +19,7 @@ interface GenerationViewProps {
 }
 
 export default function GenerationView({ project, user, onUpdateUser, onShowPricing, onComplete, onViewDetail, onBackToDashboard }: GenerationViewProps) {
+  const { showAlert } = useAlert();
   const { t } = useTranslation();
   const [currentStep, setCurrentStep] = useState(0); // 0: Front matter, 1+: Chapters
   const [status, setStatus] = useState<'idle' | 'generating' | 'saving' | 'error'>('idle');
@@ -365,7 +367,7 @@ export default function GenerationView({ project, user, onUpdateUser, onShowPric
       });
     } catch (error) {
       console.error("Export DOCX failed:", error);
-      alert(t('generationView.exportFailed'));
+      showAlert({ message: t('generationView.exportFailed'), type: 'error' });
     }
   };
 

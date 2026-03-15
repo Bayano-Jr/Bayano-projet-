@@ -9,6 +9,7 @@ import { exportChatToDOCX } from '../services/exportService';
 import { storageService } from '../services/storageService';
 import { getAiClient } from '../services/geminiService';
 import i18n from '../i18n';
+import { useAlert } from '../contexts/AlertContext';
 
 import { User as UserType } from '../types';
 
@@ -41,6 +42,7 @@ interface ChatAssistantProps {
 }
 
 export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: ChatAssistantProps) {
+  const { showAlert, showConfirm } = useAlert();
   const { t } = useTranslation();
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
@@ -182,7 +184,7 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
       setIsRecording(true);
     } catch (err) {
       console.error("Error accessing microphone", err);
-      alert("Impossible d'accéder au microphone. Veuillez vérifier vos permissions.");
+      showAlert({ message: "Impossible d'accéder au microphone. Veuillez vérifier vos permissions.", type: 'error' });
     }
   };
 
@@ -353,17 +355,23 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
   };
 
   const clearChat = async () => {
-    if (window.confirm("Voulez-vous vraiment effacer cette conversation ?")) {
-      if (currentSessionId) {
-        try {
-          await storageService.deleteChatSession(currentSessionId);
-        } catch (err) {
-          console.error("Error deleting session:", err);
+    showConfirm({
+      title: 'Effacer la conversation',
+      message: 'Voulez-vous vraiment effacer cette conversation ?',
+      confirmText: 'Effacer',
+      type: 'error',
+      onConfirm: async () => {
+        if (currentSessionId) {
+          try {
+            await storageService.deleteChatSession(currentSessionId);
+          } catch (err) {
+            console.error("Error deleting session:", err);
+          }
         }
+        setSessions(prev => prev.filter(s => s.id !== currentSessionId));
+        setCurrentSessionId(null);
       }
-      setSessions(prev => prev.filter(s => s.id !== currentSessionId));
-      setCurrentSessionId(null);
-    }
+    });
   };
 
   const exportToWord = async () => {
@@ -372,7 +380,7 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
       await exportChatToDOCX(messages);
     } catch (error) {
       console.error("Export error:", error);
-      alert("Erreur lors de l'exportation.");
+      showAlert({ message: "Erreur lors de l'exportation.", type: 'error' });
     }
   };
 
@@ -394,7 +402,7 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
       });
     } else {
       navigator.clipboard.writeText(content);
-      alert("Texte copié dans le presse-papiers !");
+      showAlert({ message: "Texte copié dans le presse-papiers !", type: 'success' });
     }
   };
 

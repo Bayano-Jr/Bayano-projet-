@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, FileText, Download, Check, Settings, FileDown, Loader2 } from 'lucide-react';
 import { Project } from '../types';
+import { useAlert } from '../contexts/AlertContext';
 
 interface ExportModalProps {
   project: Project;
@@ -19,6 +20,7 @@ export interface ExportOptions {
 }
 
 export default function ExportModal({ project, onClose, onExportDOCX, onExportPDF, onDownloadStored }: ExportModalProps) {
+  const { showAlert } = useAlert();
   const [options, setOptions] = useState<ExportOptions>({
     includeTitlePage: true,
     includeTableOfContents: true,
@@ -41,7 +43,7 @@ export default function ExportModal({ project, onClose, onExportDOCX, onExportPD
       }
     } catch (error) {
       console.error(`Export ${type} failed:`, error);
-      alert(`L'exportation en ${type.toUpperCase()} a échoué.`);
+      showAlert({ message: `L'exportation en ${type.toUpperCase()} a échoué.`, type: 'error' });
     } finally {
       setIsExporting(null);
     }
@@ -61,11 +63,11 @@ export default function ExportModal({ project, onClose, onExportDOCX, onExportPD
         initial={{ opacity: 0, scale: 0.9, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.9, y: 20 }}
-        className="relative w-full max-w-xl bg-white rounded-[40px] shadow-2xl overflow-hidden flex flex-col"
+        className="relative w-full max-w-xl bg-white rounded-[30px] sm:rounded-[40px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
       >
-        <div className="p-6 md:p-12 border-b border-slate-50 flex justify-between items-center bg-white z-10">
+        <div className="p-6 md:p-12 border-b border-slate-50 flex justify-between items-center bg-white z-10 shrink-0">
           <div>
-            <h2 className="text-2xl md:text-3xl font-serif font-bold text-academic-900 mb-1 md:mb-2">Options d'Exportation</h2>
+            <h2 className="text-xl sm:text-2xl md:text-3xl font-serif font-bold text-academic-900 mb-1 md:mb-2">Options d'Exportation</h2>
             <p className="text-slate-400 text-[10px] md:text-xs font-bold uppercase tracking-widest">Configurez votre manuscrit final</p>
           </div>
           <button 
@@ -76,7 +78,7 @@ export default function ExportModal({ project, onClose, onExportDOCX, onExportPD
           </button>
         </div>
 
-        <div className="p-6 md:p-12 space-y-6 md:space-y-8 overflow-y-auto max-h-[60vh]">
+        <div className="p-6 md:p-12 space-y-6 md:space-y-8 overflow-y-auto flex-1">
           <div className="space-y-4">
             <h3 className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate-300">Éléments à inclure</h3>
             
