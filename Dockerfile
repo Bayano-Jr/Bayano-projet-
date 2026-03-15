@@ -19,4 +19,4 @@ ENV NODE_ENV=production
 ENV NODE_OPTIONS="--experimental-strip-types"
 
 # Start the server
-CMD ["npm", "start"]
+CMD ["node", "dist-server/server.js"]

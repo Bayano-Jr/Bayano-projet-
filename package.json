@@ -5,10 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "start": "tsx server.ts",
-    "build": "vite build",
+    "start": "node dist-server/server.js",
+    "build": "vite build && npx esbuild server.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist-server/server.js --external:express --external:cors --external:pg --external:bcryptjs --external:connect-pg-simple --external:express-session --external:speakeasy --external:qrcode --external:html-to-docx --external:lightningcss --external:vite",
     "preview": "vite preview",
-    "clean": "rm -rf dist",
+    "clean": "rm -rf dist dist-server",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
