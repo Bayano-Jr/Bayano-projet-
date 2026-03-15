@@ -13,7 +13,7 @@ COPY . .
 RUN npm run build
 
 # Expose the port
-EXPOSE 3000
+EXPOSE 8080
 
 ENV NODE_ENV=production
 ENV NODE_OPTIONS="--experimental-strip-types"
