@@ -50,11 +50,13 @@ export default function ExportModal({ project, onClose, onExportDOCX, onExportPD
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-6">
-      <motion.div 
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-6"
+    >
+      <div 
         className="absolute inset-0 bg-academic-900/40 backdrop-blur-md"
         onClick={onClose}
       />
@@ -157,6 +159,6 @@ export default function ExportModal({ project, onClose, onExportDOCX, onExportPD
           )}
         </div>
       </motion.div>
-    </div>
+    </motion.div>
   );
 }

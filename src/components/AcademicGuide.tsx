@@ -19,17 +19,15 @@ const AcademicGuide: React.FC<AcademicGuideProps> = ({ isOpen, onClose }) => {
     { id: 'structure', label: 'Structure du Plan', icon: List },
   ];
 
-  if (!isOpen) return null;
-
   return (
     <AnimatePresence>
       {isOpen && (
-        <>
+        <motion.div key="academic-guide" className="fixed inset-0 z-50">
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50"
+            className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-40"
             onClick={onClose}
           />
           <motion.div
@@ -278,7 +276,7 @@ const AcademicGuide: React.FC<AcademicGuideProps> = ({ isOpen, onClose }) => {
               </button>
             </div>
           </motion.div>
-        </>
+        </motion.div>
       )}
     </AnimatePresence>
   );

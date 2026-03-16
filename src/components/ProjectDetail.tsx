@@ -565,6 +565,7 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
       <AnimatePresence>
         {isExportModalOpen && (
           <ExportModal 
+            key="export-modal"
             project={project}
             onClose={() => setIsExportModalOpen(false)}
             onExportDOCX={handleExport}
@@ -586,7 +587,7 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
 
       <AnimatePresence>
         {selectedFootnote && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
+          <div key="footnote-modal" className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}

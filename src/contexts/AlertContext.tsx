@@ -52,7 +52,7 @@ export function AlertProvider({ children }: { children: ReactNode }) {
       {children}
       <AnimatePresence>
         {alert && (
-          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+          <motion.div key="alert-modal" className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -124,7 +124,7 @@ export function AlertProvider({ children }: { children: ReactNode }) {
                 </div>
               </div>
             </motion.div>
-          </div>
+          </motion.div>
         )}
       </AnimatePresence>
     </AlertContext.Provider>

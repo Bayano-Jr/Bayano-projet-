@@ -104,7 +104,7 @@ export default function App() {
       
       // Add a timeout to the fetch
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
 
       const headers: Record<string, string> = {};
       const sid = localStorage.getItem('bayano_sid');
@@ -410,7 +410,7 @@ export default function App() {
 
             <AnimatePresence>
               {isUserMenuOpen && (
-                <>
+                <motion.div key="user-menu-container" className="relative z-50">
                   <div 
                     className="fixed inset-0 z-40" 
                     onClick={() => setIsUserMenuOpen(false)}
@@ -458,7 +458,7 @@ export default function App() {
                       Déconnexion
                     </button>
                   </motion.div>
-                </>
+                </motion.div>
               )}
             </AnimatePresence>
           </div>
