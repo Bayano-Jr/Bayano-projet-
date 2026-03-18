@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Check, Edit2, Save, X, Plus, Trash2, GripVertical, Sparkles, Send, Loader2, Database, Layout } from 'lucide-react';
 import { PlanStructure, Project, User as UserType } from '../types';
 import { motion, Reorder } from 'motion/react';
@@ -10,12 +10,13 @@ interface PlanEditorProps {
   project: Project;
   plan: PlanStructure;
   onValidate: (updatedPlan: PlanStructure) => void;
+  onAutoSave?: (updatedPlan: PlanStructure) => void;
   user: UserType | null;
   onUpdateUser: (user: UserType) => void;
   onShowPricing: () => void;
 }
 
-export default function PlanEditor({ project, plan: initialPlan, onValidate, user, onUpdateUser, onShowPricing }: PlanEditorProps) {
+export default function PlanEditor({ project, plan: initialPlan, onValidate, onAutoSave, user, onUpdateUser, onShowPricing }: PlanEditorProps) {
   const { showAlert } = useAlert();
   const { t } = useTranslation();
   const [plan, setPlan] = useState<PlanStructure>(initialPlan);
@@ -25,6 +26,45 @@ export default function PlanEditor({ project, plan: initialPlan, onValidate, use
   const [isRefining, setIsRefining] = useState(false);
   const [refinePrompt, setRefinePrompt] = useState("");
   const [isRefiningLoading, setIsRefiningLoading] = useState(false);
+  const [isAutoSaving, setIsAutoSaving] = useState(false);
+
+  const planRef = useRef(plan);
+  const isDirtyRef = useRef(false);
+  const onAutoSaveRef = useRef(onAutoSave);
+  const lastSavedPlanRef = useRef(initialPlan);
+
+  // Keep refs in sync with state/props
+  useEffect(() => {
+    planRef.current = plan;
+  }, [plan]);
+
+  useEffect(() => {
+    onAutoSaveRef.current = onAutoSave;
+  }, [onAutoSave]);
+
+  // Mark as dirty when plan changes from last saved
+  useEffect(() => {
+    if (JSON.stringify(plan) !== JSON.stringify(lastSavedPlanRef.current)) {
+      isDirtyRef.current = true;
+    }
+  }, [plan]);
+
+  // Auto-save interval
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (isDirtyRef.current && onAutoSaveRef.current) {
+        setIsAutoSaving(true);
+        onAutoSaveRef.current(planRef.current);
+        lastSavedPlanRef.current = planRef.current;
+        isDirtyRef.current = false;
+        
+        // Hide auto-saving indicator after a brief moment
+        setTimeout(() => setIsAutoSaving(false), 2000);
+      }
+    }, 30000); // 30 seconds
+
+    return () => clearInterval(interval);
+  }, []);
 
   const handleSave = () => {
     onValidate(plan);
@@ -182,6 +222,17 @@ export default function PlanEditor({ project, plan: initialPlan, onValidate, use
           <div className="flex items-center gap-2 md:gap-3 text-accent font-bold uppercase tracking-[0.3em] text-[8px] md:text-[10px] mb-4 md:mb-6">
             <div className="w-6 md:w-8 h-[1px] bg-accent" />
             {t('planEditor.intellectualStructure')}
+            {isAutoSaving && (
+              <motion.span 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="ml-4 flex items-center gap-1.5 text-slate-400 normal-case tracking-normal"
+              >
+                <Loader2 size={12} className="animate-spin" />
+                Sauvegarde auto...
+              </motion.span>
+            )}
           </div>
           <h2 className="text-4xl sm:text-5xl md:text-8xl mb-4 md:mb-8 font-serif font-semibold tracking-tight text-academic-900 leading-[0.9] break-words">{t('planEditor.title')}</h2>
           <p className="text-base md:text-xl text-slate-500 font-serif italic leading-relaxed">{t('planEditor.subtitle')}</p>

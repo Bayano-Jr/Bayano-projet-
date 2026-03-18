@@ -18,7 +18,7 @@ export interface AppSettings {
   appSlogan: string;
 }
 
-export type DocumentType = 'memoire' | 'tp' | 'article' | 'rapport';
+export type DocumentType = string;
 
 export interface Project {
   id: string;

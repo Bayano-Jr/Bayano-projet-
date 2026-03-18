@@ -119,6 +119,7 @@ export const exportChatToDOCX = async (messages: { role: string, content: string
 };
 
 export const exportToDOCX = async (project: Project & { chapters: Chapter[] }, options: ExportOptions) => {
+  const isStandardDoc = ['memoire', 'rapport', 'article'].includes(project.documentType || '');
   let globalFootnoteCounter = 1;
   const documentFootnotes: Record<number, { children: Paragraph[] }> = {};
 
@@ -239,7 +240,8 @@ export const exportToDOCX = async (project: Project & { chapters: Chapter[] }, o
             text: project.documentType === 'tp' ? "TRAVAIL PRATIQUE" : 
                   project.documentType === 'rapport' ? "RAPPORT DE STAGE" : 
                   project.documentType === 'article' ? "ARTICLE SCIENTIFIQUE" : 
-                  "MÉMOIRE DE FIN D'ÉTUDES",
+                  project.documentType === 'memoire' ? "MÉMOIRE DE FIN D'ÉTUDES" :
+                  (project.documentType?.toUpperCase() || "DOCUMENT"),
             alignment: AlignmentType.CENTER,
             run: { size: 28, bold: true },
           }),
@@ -279,7 +281,7 @@ export const exportToDOCX = async (project: Project & { chapters: Chapter[] }, o
             alignment: AlignmentType.CENTER,
             spacing: { after: 400 },
           }),
-          ...(project.documentType !== 'tp' ? [
+          ...(isStandardDoc ? [
             new Paragraph({ text: "Éléments Préliminaires", spacing: { before: 200 } })
           ] : []),
           ...(project.chapters || [])
@@ -298,7 +300,7 @@ export const exportToDOCX = async (project: Project & { chapters: Chapter[] }, o
             // Front matter parsing
             try {
               const fm = JSON.parse(ch.content);
-              if (project.documentType === 'tp') {
+              if (!isStandardDoc) {
                 return [
                   new Paragraph({ text: fm.page_de_garde || "", alignment: AlignmentType.CENTER }),
                   new PageBreak(),
@@ -330,9 +332,38 @@ export const exportToDOCX = async (project: Project & { chapters: Chapter[] }, o
           if (chTitle.toLowerCase().includes('bibliographie') && !options.includeBibliography) return [];
           if (chTitle.toLowerCase().includes('annexe') && !options.includeAnnexes) return [];
 
+          const cleanTitleContent = (title: string, content: string) => {
+            if (!content) return content;
+            const lines = content.split('\n');
+            let firstNonEmptyLineIdx = 0;
+            while (firstNonEmptyLineIdx < lines.length && lines[firstNonEmptyLineIdx].trim() === '') {
+              firstNonEmptyLineIdx++;
+            }
+            
+            if (firstNonEmptyLineIdx < lines.length) {
+              const firstLine = lines[firstNonEmptyLineIdx].trim();
+              const titleRegex = new RegExp(`^#+\\s*\\**${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\**\\s*$`, 'i');
+              if (titleRegex.test(firstLine)) {
+                lines.splice(firstNonEmptyLineIdx, 1);
+                return lines.join('\n').trim();
+              }
+              if (title.toUpperCase().includes('INTRODUCTION') && /^#+\s*\**INTRODUCTION\**\s*$/i.test(firstLine)) {
+                lines.splice(firstNonEmptyLineIdx, 1);
+                return lines.join('\n').trim();
+              }
+              if (title.toUpperCase().includes('CONCLUSION') && /^#+\s*\**CONCLUSION( GÉNÉRALE)?\**\s*$/i.test(firstLine)) {
+                lines.splice(firstNonEmptyLineIdx, 1);
+                return lines.join('\n').trim();
+              }
+            }
+            return content;
+          };
+
+          const cleanedContent = cleanTitleContent(chTitle, ch.content || '');
+
           // Parse footnotes in chapter content
           const localToGlobalFootnoteMap = new Map<string, number>();
-          const contentLines = (ch.content || '').split('\n');
+          const contentLines = cleanedContent.split('\n');
           const cleanContentLines: string[] = [];
           
           contentLines.forEach((line: string) => {

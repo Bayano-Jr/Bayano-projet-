@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import Dashboard from './components/Dashboard';
 import ProjectWizard from './components/ProjectWizard';
+import CustomProjectWizard from './components/CustomProjectWizard';
 import PlanEditor from './components/PlanEditor';
 import GenerationView from './components/GenerationView';
 import ProjectDetail from './components/ProjectDetail';
@@ -18,7 +19,7 @@ import { BookOpen, Sparkles, Shield, LogOut, Settings as SettingsIcon, MessageSq
 import i18n from './i18n';
 import { useAlert } from './contexts/AlertContext';
 
-type View = 'dashboard' | 'wizard' | 'plan_editor' | 'generation' | 'detail' | 'admin' | 'chat' | 'anti_plagiarism';
+type View = 'dashboard' | 'wizard' | 'custom_wizard' | 'plan_editor' | 'generation' | 'detail' | 'admin' | 'chat' | 'anti_plagiarism';
 
 import { ErrorBoundary } from './components/ErrorBoundary';
 
@@ -283,6 +284,18 @@ export default function App() {
     }
   };
 
+  const handlePlanAutoSave = React.useCallback(async (updatedPlan: PlanStructure) => {
+    if (!selectedProjectId || !currentProject) return;
+    
+    try {
+      const projectToSave = { ...currentProject, plan: JSON.stringify(updatedPlan) };
+      await storageService.saveProject(projectToSave);
+      setCurrentProject(projectToSave);
+    } catch (error) {
+      console.error("Error auto-saving plan:", error);
+    }
+  }, [selectedProjectId, currentProject]);
+
   const handleGenerationComplete = () => {
     setView('detail');
   };
@@ -410,7 +423,13 @@ export default function App() {
 
             <AnimatePresence>
               {isUserMenuOpen && (
-                <motion.div key="user-menu-container" className="relative z-50">
+                <motion.div 
+                  key="user-menu-container" 
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="relative z-50"
+                >
                   <div 
                     className="fixed inset-0 z-40" 
                     onClick={() => setIsUserMenuOpen(false)}
@@ -499,6 +518,7 @@ export default function App() {
             <div className={view === 'dashboard' ? 'block' : 'hidden'}>
               <Dashboard 
                 onNewProject={handleNewProject} 
+                onCustomProject={() => setView('custom_wizard')}
                 onSelectProject={handleSelectProject} 
                 onSessionError={handleSessionError}
               />
@@ -521,11 +541,21 @@ export default function App() {
               />
             )}
 
+            {view === 'custom_wizard' && (
+              <CustomProjectWizard 
+                user={user}
+                onCancel={() => setView('dashboard')} 
+                onComplete={handleWizardComplete} 
+                onShowPricing={() => setIsPricingOpen(true)}
+              />
+            )}
+
             {view === 'plan_editor' && generatedPlan && currentProject && (
               <PlanEditor 
                 project={currentProject}
                 plan={generatedPlan} 
                 onValidate={handlePlanValidate} 
+                onAutoSave={handlePlanAutoSave}
                 user={user}
                 onUpdateUser={setUser}
                 onShowPricing={() => setIsPricingOpen(true)}

@@ -8,11 +8,12 @@ import AcademicGuide from './AcademicGuide';
 
 interface DashboardProps {
   onNewProject: () => void;
+  onCustomProject: () => void;
   onSelectProject: (id: string) => void;
   onSessionError?: () => void;
 }
 
-export default function Dashboard({ onNewProject, onSelectProject, onSessionError }: DashboardProps) {
+export default function Dashboard({ onNewProject, onCustomProject, onSelectProject, onSessionError }: DashboardProps) {
   const { t } = useTranslation();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -98,6 +99,15 @@ export default function Dashboard({ onNewProject, onSelectProject, onSessionErro
           >
             <Plus size={20} className="group-hover:rotate-90 transition-transform duration-500 md:w-6 md:h-6" />
             {t('dashboard.newProject')}
+          </motion.button>
+          <motion.button 
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={onCustomProject} 
+            className="bg-indigo-50 border border-indigo-200 text-indigo-800 hover:bg-indigo-100 w-full sm:w-auto group py-3 md:py-4 px-4 md:px-6 rounded-2xl flex items-center justify-center gap-2 md:gap-3 font-medium transition-all shadow-sm text-sm md:text-base"
+          >
+            <FileText size={18} className="text-indigo-600 md:w-5 md:h-5" />
+            Travail sur mesure
           </motion.button>
           <motion.button 
             whileHover={{ scale: 1.02 }}

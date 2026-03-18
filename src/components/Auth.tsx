@@ -64,7 +64,8 @@ export default function Auth({ onLogin }: AuthProps) {
 
   const handleGoogleLogin = async () => {
     try {
-      const response = await fetch('/api/auth/google/url', { credentials: 'include' });
+      const origin = window.location.origin;
+      const response = await fetch(`/api/auth/google/url?origin=${encodeURIComponent(origin)}`, { credentials: 'include' });
       const { url } = await response.json();
       window.open(url, 'google_oauth', 'width=600,height=700');
     } catch (err) {

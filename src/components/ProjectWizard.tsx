@@ -151,7 +151,6 @@ export default function ProjectWizard({ user, onCancel, onComplete, onShowPricin
                       onChange={e => setFormData({...formData, documentType: e.target.value as any})}
                     >
                       <option value="memoire">{t('wizard.options.memoire')}</option>
-                      <option value="tp">{t('wizard.options.tp')}</option>
                       <option value="article">{t('wizard.options.article')}</option>
                       <option value="rapport">{t('wizard.options.rapport')}</option>
                     </select>
@@ -330,12 +329,6 @@ export default function ProjectWizard({ user, onCancel, onComplete, onShowPricin
               stepPages = 1;
               defaultPages = 15;
               advice = "Un article scientifique fait généralement entre 10 et 20 pages.";
-            } else if (formData.documentType === 'tp') {
-              minPages = 5;
-              maxPages = 40;
-              stepPages = 1;
-              defaultPages = 10;
-              advice = "Un TP fait généralement entre 5 et 15 pages selon la matière.";
             } else if (formData.documentType === 'rapport') {
               minPages = 15;
               maxPages = 80;
@@ -406,7 +399,6 @@ export default function ProjectWizard({ user, onCancel, onComplete, onShowPricin
                     <p className="text-xs md:text-sm text-slate-600 leading-relaxed">
                       <strong className="text-academic-900 font-bold">{t('wizard.expertAdvice')}</strong> {t('wizard.adviceText')} {t(
                         formData.documentType === 'article' ? 'wizard.adviceArticle' :
-                        formData.documentType === 'tp' ? 'wizard.adviceTp' :
                         formData.documentType === 'rapport' ? 'wizard.adviceRapport' :
                         'wizard.adviceMemoire'
                       )}
@@ -425,21 +417,6 @@ export default function ProjectWizard({ user, onCancel, onComplete, onShowPricin
                     </select>
                     <p className="text-xs text-slate-400 mt-2 italic">{t('wizard.modelDesc')}</p>
                   </div>
-
-                  {formData.documentType === 'tp' && (
-                    <div className="group">
-                      <label className="block text-[10px] uppercase tracking-[0.2em] font-bold text-slate-400 mb-4 group-focus-within:text-accent transition-colors">{t('wizard.tpMode')}</label>
-                      <select 
-                        className="academic-input h-14 px-6 bg-slate-50/50 border-slate-100 focus:bg-white transition-all appearance-none"
-                        value={formData.generationMode || 'structured'}
-                        onChange={e => setFormData({...formData, generationMode: e.target.value as 'structured' | 'direct'})}
-                      >
-                        <option value="structured">{t('wizard.structured')}</option>
-                        <option value="direct">{t('wizard.direct')}</option>
-                      </select>
-                      <p className="text-xs text-slate-400 mt-2 italic">{t('wizard.tpModeDesc')}</p>
-                    </div>
-                  )}
                 </div>
               </motion.div>
             );

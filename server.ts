@@ -215,8 +215,26 @@ async function startServer() {
 
   app.use(cors({
     origin: (origin, callback) => {
-      // Return the origin itself to satisfy the browser's requirement for explicit origin with credentials
-      callback(null, origin || true);
+      if (!origin) return callback(null, true);
+      
+      const allowedOrigins = [
+        'http://localhost:3000',
+        'http://localhost:5173',
+        'http://127.0.0.1:3000',
+        'http://127.0.0.1:5173'
+      ];
+      
+      if (process.env.APP_URL) {
+        allowedOrigins.push(process.env.APP_URL.replace(/\/$/, ""));
+      }
+
+      // Allow any origin ending with .run.app for AI Studio preview
+      if (origin.endsWith('.run.app') || allowedOrigins.includes(origin)) {
+        callback(null, origin);
+      } else {
+        console.warn(`[CORS] Rejected origin: ${origin}`);
+        callback(new Error('Not allowed by CORS'));
+      }
     },
     credentials: true
   }));
@@ -309,6 +327,37 @@ async function startServer() {
 
   // Auth Middleware
   const requireAuth = (req: any, res: any, next: any) => {
+    // Enforce CSRF check on state-changing requests using Origin/Referer
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+      const origin = req.headers.origin || req.headers.referer;
+      if (!origin) {
+        console.warn(`[CSRF Check] Failed for ${req.path}. Missing Origin/Referer.`);
+        return res.status(403).json({ error: "Requête non autorisée (Origine manquante)." });
+      }
+      
+      try {
+        const originUrl = new URL(origin);
+        let expectedHost = req.headers['x-forwarded-host'] || req.get('host');
+        if (typeof expectedHost === 'string' && expectedHost.includes(',')) {
+          expectedHost = expectedHost.split(',')[0].trim();
+        }
+        
+        let appUrlHost = '';
+        if (process.env.APP_URL) {
+          try {
+            appUrlHost = new URL(process.env.APP_URL).host;
+          } catch (e) {}
+        }
+
+        if (originUrl.host !== expectedHost && originUrl.host !== appUrlHost && originUrl.host !== 'localhost:3000' && originUrl.host !== 'localhost:5173' && originUrl.host !== '127.0.0.1:3000' && originUrl.host !== '127.0.0.1:5173') {
+          console.warn(`[CSRF Check] Failed for ${req.path}. Origin: ${originUrl.host}, Expected: ${expectedHost}, APP_URL: ${appUrlHost}`);
+          return res.status(403).json({ error: "Requête non autorisée (Origine invalide)." });
+        }
+      } catch (err) {
+        return res.status(403).json({ error: "Requête non autorisée (Origine malformée)." });
+      }
+    }
+
     if (!req.session || !req.session.userId) {
       console.warn(`[AuthCheck] Unauthorized access attempt to ${req.path}. SessionID: ${req.sessionID}, userId: ${req.session?.userId}`);
       return res.status(401).json({ error: "Non autorisé. Veuillez vous reconnecter." });
@@ -317,6 +366,37 @@ async function startServer() {
   };
 
   const requireAdmin = (req: any, res: any, next: any) => {
+    // Enforce CSRF check on state-changing requests using Origin/Referer
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+      const origin = req.headers.origin || req.headers.referer;
+      if (!origin) {
+        console.warn(`[CSRF Check] Admin failed for ${req.path}. Missing Origin/Referer.`);
+        return res.status(403).json({ error: "Requête non autorisée (Origine manquante)." });
+      }
+      
+      try {
+        const originUrl = new URL(origin);
+        let expectedHost = req.headers['x-forwarded-host'] || req.get('host');
+        if (typeof expectedHost === 'string' && expectedHost.includes(',')) {
+          expectedHost = expectedHost.split(',')[0].trim();
+        }
+        
+        let appUrlHost = '';
+        if (process.env.APP_URL) {
+          try {
+            appUrlHost = new URL(process.env.APP_URL).host;
+          } catch (e) {}
+        }
+
+        if (originUrl.host !== expectedHost && originUrl.host !== appUrlHost && originUrl.host !== 'localhost:3000' && originUrl.host !== 'localhost:5173' && originUrl.host !== '127.0.0.1:3000' && originUrl.host !== '127.0.0.1:5173') {
+          console.warn(`[CSRF Check] Admin failed for ${req.path}. Origin: ${originUrl.host}, Expected: ${expectedHost}, APP_URL: ${appUrlHost}`);
+          return res.status(403).json({ error: "Requête non autorisée (Origine invalide)." });
+        }
+      } catch (err) {
+        return res.status(403).json({ error: "Requête non autorisée (Origine malformée)." });
+      }
+    }
+
     if (!req.session || !req.session.isAdmin) {
       console.warn(`[AdminCheck] Unauthorized admin access attempt to ${req.path}. SessionID: ${req.sessionID}`);
       return res.status(403).json({ error: "Accès refusé. Privilèges administrateur requis." });
@@ -599,7 +679,7 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  app.post("/api/auth/logout", async (req, res) => {
+  app.post("/api/auth/logout", requireAuth, async (req, res) => {
     req.session.destroy(() => {
       res.clearCookie("bayano_sid_v4", {
         secure: isProd,
@@ -637,9 +717,8 @@ async function startServer() {
     }
   });
 
-  app.get("/api/auth/me", async (req, res) => {
+  app.get("/api/auth/me", requireAuth, async (req, res) => {
     console.log(`[AuthMe] SessionID: ${req.sessionID}, UserID: ${req.session.userId}, CookieHeader: ${req.headers.cookie}`);
-    if (!req.session.userId) return res.status(401).json({ error: "Non connecté" });
     const user: any = await db.get("SELECT id, email, name, two_factor_enabled, plan, credits, subscription_expires_at FROM users WHERE id = ?", req.session.userId);
     if (user) {
       res.json({ 
@@ -658,8 +737,12 @@ async function startServer() {
       return res.status(500).json({ error: "Google Client ID non configuré" });
     }
 
+    const { origin } = req.query;
     let redirectUri = "";
-    if (process.env.APP_URL) {
+    
+    if (origin && typeof origin === 'string') {
+      redirectUri = `${origin.replace(/\/$/, "")}/api/auth/google/callback`;
+    } else if (process.env.APP_URL) {
       // Remove trailing slash if present
       const baseUrl = process.env.APP_URL.replace(/\/$/, "");
       redirectUri = `${baseUrl}/api/auth/google/callback`;
@@ -669,13 +752,17 @@ async function startServer() {
       redirectUri = `${protocol}://${host}/api/auth/google/callback`;
     }
     
+    const stateObj = { origin: origin || '' };
+    const stateStr = Buffer.from(JSON.stringify(stateObj)).toString('base64');
+
     const params = new URLSearchParams({
       client_id: clientId,
       redirect_uri: redirectUri,
       response_type: 'code',
       scope: 'openid email profile',
       access_type: 'offline',
-      prompt: 'consent'
+      prompt: 'consent',
+      state: stateStr
     });
 
     const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
@@ -683,14 +770,27 @@ async function startServer() {
   });
 
   app.get("/api/auth/google/callback", async (req, res) => {
-    const { code } = req.query;
+    const { code, state } = req.query;
     if (!code) return res.status(400).send("Code manquant");
 
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
     
     let redirectUri = "";
-    if (process.env.APP_URL) {
+    let origin = "";
+    
+    if (state && typeof state === 'string') {
+      try {
+        const decoded = JSON.parse(Buffer.from(state, 'base64').toString('utf-8'));
+        if (decoded.origin) origin = decoded.origin;
+      } catch (e) {
+        console.error("Failed to decode state", e);
+      }
+    }
+
+    if (origin) {
+      redirectUri = `${origin.replace(/\/$/, "")}/api/auth/google/callback`;
+    } else if (process.env.APP_URL) {
       const baseUrl = process.env.APP_URL.replace(/\/$/, "");
       redirectUri = `${baseUrl}/api/auth/google/callback`;
     } else {
@@ -1102,7 +1202,22 @@ async function startServer() {
       
       const adminPassword = currentSettings.adminPassword || 'admin';
       
-      if (password === adminPassword) {
+      let isMatch = false;
+      if (adminPassword.startsWith('$2a$') || adminPassword.startsWith('$2b$')) {
+        isMatch = await bcrypt.compare(password, adminPassword);
+      } else {
+        // Fallback for plain text password (e.g. default 'admin' or before migration)
+        isMatch = (password === adminPassword);
+        
+        // Auto-migrate to hashed password if it matches
+        if (isMatch) {
+          const hashed = await bcrypt.hash(password, 10);
+          await db.run("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+            'adminPassword', hashed);
+        }
+      }
+      
+      if (isMatch) {
         req.session.regenerate((err) => {
           if (err) {
             console.error("Session regenerate error:", err);
@@ -1142,7 +1257,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/admin/error-logs", async (req, res) => {
+  app.get("/api/admin/error-logs", requireAdmin, async (req, res) => {
     try {
       const logs = await db.all("SELECT * FROM error_logs ORDER BY created_at DESC LIMIT 50");
       res.json(logs);
@@ -1151,7 +1266,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/admin/schema", async (req, res) => {
+  app.get("/api/admin/schema", requireAdmin, async (req, res) => {
     try {
       const tables = await pool.query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'");
       const columns = await pool.query("SELECT table_name, column_name, data_type FROM information_schema.columns WHERE table_schema = 'public'");
@@ -1161,7 +1276,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/admin/sessions", async (req, res) => {
+  app.get("/api/admin/sessions", requireAdmin, async (req, res) => {
     try {
       const sessions = await pool.query("SELECT * FROM session");
       res.json(sessions.rows);
@@ -1300,9 +1415,16 @@ async function startServer() {
       pricePackMemoire: 29.99,
       globalDiscount: 0,
     };
+    
+    const isAdmin = req.session && req.session.isAdmin;
+
     rows.forEach((row: any) => {
-      // Only send adminPassword if the user is an admin
-      if (row.key !== 'adminPassword' || (req.session && req.session.isAdmin)) {
+      // Only send adminPassword if the user is an admin, and send a placeholder
+      if (row.key === 'adminPassword') {
+        if (isAdmin) {
+          settings[row.key] = '********';
+        }
+      } else {
         try {
           settings[row.key] = JSON.parse(row.value);
         } catch {
@@ -1318,18 +1440,32 @@ async function startServer() {
       const { settings } = req.body;
       
       for (const [key, value] of Object.entries(settings)) {
-        // If the client sends the default 'admin' password but the DB has a different one, don't overwrite it
-        // unless they explicitly changed it. Actually, since GET /api/settings now returns the real password
-        // for admins, the client will send the real password back.
-        // We just need to make sure we don't accidentally save 'admin' if the client didn't get the real password.
-        if (key === 'adminPassword' && value === 'admin') {
-           const current = await db.get("SELECT value FROM settings WHERE key = 'adminPassword'") as any;
-           if (current && current.value !== 'admin') {
-             continue; // Skip overwriting with default 'admin' if a custom password exists
-           }
+        let finalValue = value;
+        
+        if (key === 'adminPassword') {
+          // Ignore placeholder
+          if (value === '********') {
+            continue;
+          }
+          
+          const current = await db.get("SELECT value FROM settings WHERE key = 'adminPassword'") as any;
+          
+          // If the client sends the default 'admin' password but the DB has a different one, don't overwrite it
+          if (value === 'admin' && current && current.value !== 'admin') {
+            continue; // Skip overwriting with default 'admin' if a custom password exists
+          }
+          
+          // Only hash and update if the password has actually changed
+          // We check if it's already a bcrypt hash to avoid double hashing if the client sends back the hash
+          if (typeof value === 'string' && !value.startsWith('$2a$') && !value.startsWith('$2b$')) {
+             finalValue = await bcrypt.hash(value, 10);
+          } else if (current && value === current.value) {
+             continue; // No change
+          }
         }
+        
         await db.run("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
-          key, typeof value === 'string' ? value : JSON.stringify(value));
+          key, typeof finalValue === 'string' ? finalValue : JSON.stringify(finalValue));
       }
       res.json({ success: true });
     } catch (err) {

@@ -373,6 +373,37 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
     }
   };
 
+  const cleanChapterContent = (title: string, content: string) => {
+    if (!content) return content;
+    const lines = content.split('\n');
+    let firstNonEmptyLineIdx = 0;
+    while (firstNonEmptyLineIdx < lines.length && lines[firstNonEmptyLineIdx].trim() === '') {
+      firstNonEmptyLineIdx++;
+    }
+    
+    if (firstNonEmptyLineIdx < lines.length) {
+      const firstLine = lines[firstNonEmptyLineIdx].trim();
+      // Check if the first line is a markdown header matching the title (case insensitive)
+      // e.g. "# INTRODUCTION" or "## CONCLUSION GÉNÉRALE"
+      const titleRegex = new RegExp(`^#+\\s*\\**${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\**\\s*$`, 'i');
+      if (titleRegex.test(firstLine)) {
+        lines.splice(firstNonEmptyLineIdx, 1);
+        return lines.join('\n').trim();
+      }
+      
+      // Also check for common generic titles if the chapter title is generic
+      if (title.toUpperCase().includes('INTRODUCTION') && /^#+\s*\**INTRODUCTION\**\s*$/i.test(firstLine)) {
+        lines.splice(firstNonEmptyLineIdx, 1);
+        return lines.join('\n').trim();
+      }
+      if (title.toUpperCase().includes('CONCLUSION') && /^#+\s*\**CONCLUSION( GÉNÉRALE)?\**\s*$/i.test(firstLine)) {
+        lines.splice(firstNonEmptyLineIdx, 1);
+        return lines.join('\n').trim();
+      }
+    }
+    return content;
+  };
+
   const handleFootnoteClick = async (href: string) => {
     const id = href.replace('#', '');
     const element = document.getElementById(id);
@@ -587,11 +618,14 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
 
       <AnimatePresence>
         {selectedFootnote && (
-          <div key="footnote-modal" className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
+          <motion.div 
+            key="footnote-modal" 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6"
+          >
+            <div 
               onClick={() => setSelectedFootnote(null)}
               className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
             />
@@ -683,7 +717,7 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
                 ) : null}
               </div>
             </motion.div>
-          </div>
+          </motion.div>
         )}
       </AnimatePresence>
 
@@ -997,7 +1031,7 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
                               }
                             }}
                           >
-                            {ch.content}
+                            {cleanChapterContent(ch.title, ch.content)}
                           </Markdown>
                         ) : (
                           <div className="p-12 bg-slate-50 rounded-3xl border border-slate-100 text-center">

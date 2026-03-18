@@ -76,11 +76,14 @@ export default function CitationManager({ isOpen, onClose }: CitationManagerProp
   return (
     <AnimatePresence>
       {isOpen && (
-        <motion.div key="citation-manager" className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+        <motion.div 
+          key="citation-manager" 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6"
+        >
+          <div 
             onClick={onClose}
             className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
           />

@@ -22,13 +22,16 @@ const AcademicGuide: React.FC<AcademicGuideProps> = ({ isOpen, onClose }) => {
   return (
     <AnimatePresence>
       {isOpen && (
-        <motion.div key="academic-guide" className="fixed inset-0 z-50">
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-40"
+        <motion.div 
+          key="academic-guide" 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50"
+        >
+          <div
             onClick={onClose}
+            className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-40"
           />
           <motion.div
             initial={{ opacity: 0, x: '100%' }}

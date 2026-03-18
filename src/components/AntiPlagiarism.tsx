@@ -457,6 +457,7 @@ export default function AntiPlagiarism({ onBack, user, onUpdateUser, onShowPrici
 
               {!isAnalyzing && !isParaphrasing && analysisResult && !paraphrasedText && (
                 <motion.div
+                  key="results"
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -20 }}
@@ -518,6 +519,7 @@ export default function AntiPlagiarism({ onBack, user, onUpdateUser, onShowPrici
 
               {!isAnalyzing && !isParaphrasing && paraphrasedText && (
                 <motion.div
+                  key="paraphrased"
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -20 }}
@@ -555,7 +557,13 @@ export default function AntiPlagiarism({ onBack, user, onUpdateUser, onShowPrici
               )}
               
               {!isAnalyzing && !isParaphrasing && !analysisResult && !paraphrasedText && (
-                <div className="h-full flex flex-col items-center justify-center text-center p-12 border-2 border-dashed border-slate-200 rounded-3xl bg-white">
+                <motion.div 
+                  key="empty"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="h-full flex flex-col items-center justify-center text-center p-12 border-2 border-dashed border-slate-200 rounded-3xl bg-white"
+                >
                   <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center shadow-sm mb-6 text-slate-300">
                     <FileText size={40} />
                   </div>
@@ -563,7 +571,7 @@ export default function AntiPlagiarism({ onBack, user, onUpdateUser, onShowPrici
                   <p className="text-slate-400 text-sm max-w-sm">
                     Collez votre texte ou importez un fichier, puis cliquez sur Analyser ou Paraphraser pour voir les résultats ici.
                   </p>
-                </div>
+                </motion.div>
               )}
             </AnimatePresence>
           </div>

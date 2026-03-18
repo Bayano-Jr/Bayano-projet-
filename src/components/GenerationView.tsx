@@ -48,8 +48,9 @@ export default function GenerationView({ project, user, onUpdateUser, onShowPric
   };
 
   const plan = getPlan();
-  const hasAnnexes = project.documentType !== 'tp' && project.documentType !== 'rapport' && plan.annexes && plan.annexes.length > 0;
-  const hasBiblio = project.documentType !== 'rapport' && !(project.documentType === 'tp' && (!plan.bibliographie_indicative || plan.bibliographie_indicative.length === 0));
+  const isStandardDoc = ['memoire', 'rapport', 'article'].includes(project.documentType || '');
+  const hasAnnexes = plan.annexes && plan.annexes.length > 0;
+  const hasBiblio = plan.bibliographie_indicative && plan.bibliographie_indicative.length > 0;
   const totalSteps = (plan.chapitres?.length || 0) + 3 + (hasBiblio ? 1 : 0) + (hasAnnexes ? 1 : 0);
 
   const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -123,24 +124,25 @@ export default function GenerationView({ project, user, onUpdateUser, onShowPric
       
       let introTargetWords = Math.max(600, Math.ceil(totalTargetWords * 0.1)); // 10% of total
       let conclusionTargetWords = Math.max(600, Math.ceil(totalTargetWords * 0.05)); // 5% of total
-      let chapterTargetWords = Math.max(1000, Math.ceil((totalTargetWords - introTargetWords - conclusionTargetWords) / plan.chapitres.length));
+      const numChapters = plan.chapitres?.length || 1;
+      let chapterTargetWords = Math.max(1000, Math.ceil((totalTargetWords - introTargetWords - conclusionTargetWords) / numChapters));
 
-      if (project.documentType === 'tp') {
+      if (!isStandardDoc) {
          introTargetWords = Math.max(300, Math.ceil(totalTargetWords * 0.1));
          conclusionTargetWords = Math.max(300, Math.ceil(totalTargetWords * 0.1));
-         chapterTargetWords = Math.max(500, Math.ceil((totalTargetWords - introTargetWords - conclusionTargetWords) / plan.chapitres.length));
+         chapterTargetWords = Math.max(500, Math.ceil((totalTargetWords - introTargetWords - conclusionTargetWords) / numChapters));
       } else if (project.documentType === 'article') {
          introTargetWords = Math.max(500, Math.ceil(totalTargetWords * 0.15));
          conclusionTargetWords = Math.max(500, Math.ceil(totalTargetWords * 0.1));
-         chapterTargetWords = Math.max(800, Math.ceil((totalTargetWords - introTargetWords - conclusionTargetWords) / plan.chapitres.length));
+         chapterTargetWords = Math.max(800, Math.ceil((totalTargetWords - introTargetWords - conclusionTargetWords) / numChapters));
       } else if (project.documentType === 'rapport') {
          introTargetWords = Math.min(600, Math.max(300, Math.ceil(totalTargetWords * 0.1))); // ~1-2 pages
          conclusionTargetWords = Math.min(600, Math.max(300, Math.ceil(totalTargetWords * 0.1))); // ~1-2 pages
-         chapterTargetWords = Math.max(1000, Math.ceil((totalTargetWords - introTargetWords - conclusionTargetWords) / plan.chapitres.length));
+         chapterTargetWords = Math.max(1000, Math.ceil((totalTargetWords - introTargetWords - conclusionTargetWords) / numChapters));
       }
 
-      // 1. Generate Front Matter (Skip for TP)
-      if (project.documentType !== 'tp' && !currentChapters.find(c => c.order_index === -1)) {
+      // 1. Generate Front Matter (Skip for custom docs)
+      if (isStandardDoc && !currentChapters.find(c => c.order_index === -1)) {
         setCurrentStep(0);
         const frontMatter = await generateFrontMatter(project);
         const frontMatterChapter: Chapter = {
@@ -155,11 +157,11 @@ export default function GenerationView({ project, user, onUpdateUser, onShowPric
         currentChapters.push(frontMatterChapter);
         setChapters([...currentChapters]);
         await delay(300); 
-      } else if (project.documentType === 'tp' && !currentChapters.find(c => c.order_index === -1)) {
-        // For TP, just create a simple page de garde
+      } else if (!isStandardDoc && !currentChapters.find(c => c.order_index === -1)) {
+        // For custom docs, just create a simple page de garde
         setCurrentStep(0);
         const frontMatter = {
-          page_de_garde: `TRAVAIL PRATIQUE\n\nSujet : ${project.title}\n\nFilière : ${project.field}\nUniversité : ${project.university}`
+          page_de_garde: `${project.documentType?.toUpperCase() || 'DOCUMENT'}\n\nSujet : ${project.title}\n\nFilière : ${project.field || 'Non spécifié'}\nUniversité : ${project.university || 'Non spécifié'}`
         };
         const frontMatterChapter: Chapter = {
           id: `${project.id}-front`,
@@ -201,8 +203,9 @@ export default function GenerationView({ project, user, onUpdateUser, onShowPric
 
       // 3. Generate Chapters Sequentially to avoid rate limits
       const generatedChapters = [];
-      for (let i = 0; i < plan.chapitres.length; i++) {
-        const chap = plan.chapitres[i];
+      const chapitres = plan.chapitres || [];
+      for (let i = 0; i < chapitres.length; i++) {
+        const chap = chapitres[i];
         let chapterData = currentChapters.find(c => c.order_index === i + 1);
         
         if (!chapterData) {
@@ -425,7 +428,7 @@ export default function GenerationView({ project, user, onUpdateUser, onShowPric
                   {currentStep > 0 ? <CheckCircle2 size={14} /> : <Loader2 size={14} className="animate-spin" />}
                 </div>
                 <span className={`text-sm font-bold tracking-tight ${currentStep > 0 ? 'text-slate-400' : 'text-academic-900'}`}>
-                  {project.documentType === 'tp' ? t('generationView.coverPage') : t('generationView.frontMatter')}
+                  {!isStandardDoc ? t('generationView.coverPage') : t('generationView.frontMatter')}
                 </span>
               </div>
 

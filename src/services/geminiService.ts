@@ -124,7 +124,7 @@ export const generatePlan = async (project: Partial<Project>): Promise<PlanStruc
   const suggestedChapters = Math.max(3, Math.ceil(project.min_pages! / 15));
   const currentYear = new Date().getFullYear();
 
-  let docTypeStr = "mémoire académique";
+  let docTypeStr = project.documentType || "document académique";
   let specificInstructions = "";
 
   if (project.documentType === 'tp') {
@@ -169,7 +169,7 @@ export const generatePlan = async (project: Partial<Project>): Promise<PlanStruc
   - L'introduction DOIT avoir un tableau "sections" VIDE: [].
   - NE METS PAS D'ANNEXES. Les annexes sont interdites pour ce rapport. Le tableau "annexes" dans le JSON DOIT être vide [].
     `;
-  } else {
+  } else if (project.documentType === 'memoire') {
     docTypeStr = "mémoire académique";
     specificInstructions = `
   Le plan doit inclure:
@@ -187,6 +187,21 @@ export const generatePlan = async (project: Partial<Project>): Promise<PlanStruc
   3. Une conclusion générale.
   4. Une bibliographie indicative.
   5. Des annexes pertinentes.
+    `;
+  } else {
+    // Custom document type
+    specificInstructions = `
+  IMPORTANT: Ce document est de type "${project.documentType}". Sa structure dépend ENTIÈREMENT du sujet proposé, des consignes de l'utilisateur, ET des normes académiques ou professionnelles standards pour ce type de document.
+  - UTILISE L'OUTIL DE RECHERCHE (Google Search) pour te renseigner sur la structure standard, les normes et les attentes habituelles pour un document de type "${project.documentType}".
+  - Adapte la structure au sujet exact en te basant sur tes recherches pour éviter de sortir un document non conforme aux normes.
+  - Détermine intelligemment si ce type de document nécessite habituellement des notes de bas de page, une bibliographie, ou des annexes. Si oui, inclus-les dans le plan (remplis les tableaux correspondants). Sinon, laisse les tableaux vides [].
+  - Respecte scrupuleusement le nombre de pages demandé (${project.min_pages} pages). Ajuste le nombre de sections et sous-sections pour atteindre ce volume sans remplissage inutile.
+  - Si l'utilisateur a fourni des consignes particulières, elles priment sur tout le reste.
+  
+  IMPORTANT POUR LE JSON:
+  - Utilise la clé "chapitres" pour lister les différentes parties principales.
+  - L'introduction et la conclusion peuvent être adaptées selon le type de document.
+  - Remplis "bibliographie_indicative" et "annexes" UNIQUEMENT si c'est pertinent pour ce type de document.
     `;
   }
 
@@ -227,12 +242,15 @@ export const generatePlan = async (project: Partial<Project>): Promise<PlanStruc
     "bibliographie_indicative": ["string"]
   }`;
 
+  const isCustomDoc = !['tp', 'article', 'rapport', 'memoire'].includes(project.documentType || '');
+  
   const response = await generateContentWithRetry({
     model: await getModel(project as Project),
     contents: prompt,
     config: {
       systemInstruction: await getSystemInstruction(),
       responseMimeType: "application/json",
+      ...(isCustomDoc ? { tools: [{ googleSearch: {} }] } : {})
     },
   });
 
@@ -274,10 +292,28 @@ export const generateChapterContent = async (
   const isBibliography = chapterTitle.toUpperCase().includes("BIBLIOGRAPHIE");
   const isAnnexes = chapterTitle.toUpperCase().includes("ANNEXE");
   
+  const isStandardDoc = ['memoire', 'rapport', 'article', 'tp'].includes(project.documentType || '');
   const shouldHaveFootnotes = project.documentType !== 'rapport' && !isConclusion && !isBibliography && !isAnnexes;
   const currentYear = new Date().getFullYear();
 
-  let docTypeStr = "mémoire académique";
+  let footnoteInstruction = "";
+  if (shouldHaveFootnotes && isStandardDoc && project.documentType !== 'tp') {
+    footnoteInstruction = `- IMPORTANT (NOTES DE BAS DE PAGE ET RÉFÉRENCES) : 
+    1. Tu DOIS générer un TRÈS GRAND NOMBRE de notes de bas de page (au moins 10 à 15 par chapitre). C'est une exigence académique stricte.
+    2. Insère une note de bas de page à CHAQUE FOIS que tu cites un auteur, un chiffre, une donnée sensible, une statistique, une définition technique, une théorie importante ou un fait historique.
+    3. Utilise STRICTEMENT la norme bibliographique sélectionnée : ${project.norm}.
+    4. La numérotation des notes doit être séquentielle, claire et commencer à 1 pour chaque chapitre. Utilise la syntaxe Markdown standard : place [^1], [^2], etc. EXACTEMENT à l'endroit de la citation dans le texte, juste après le mot ou la phrase concernée.
+       Exemple dans le texte : "Selon Bourdieu, la reproduction sociale est un mécanisme clé [^1]."
+    5. Définis TOUTES les notes de bas de page à la toute fin du texte généré, en utilisant le format : 
+       [^1]: Nom de l'auteur, Titre de l'ouvrage, Éditeur, Année, Page. (formaté selon la norme ${project.norm})
+    6. ASSURE-TOI qu'il n'y a aucune confusion : la note [^X] à la fin du texte doit correspondre EXACTEMENT à l'appel de note [^X] dans le texte, et citer le bon auteur ou la bonne source. Ne mélange pas les références.`;
+  } else if (!isStandardDoc && !isConclusion && !isBibliography && !isAnnexes) {
+    footnoteInstruction = `- NOTES DE BAS DE PAGE : Si ce type de document (${project.documentType}) nécessite habituellement des notes de bas de page ou des références, inclus-les de manière appropriée en utilisant la norme ${project.norm} et le format Markdown [^1]. Sinon, n'en mets pas.`;
+  } else {
+    footnoteInstruction = `- INTERDICTION STRICTE DE NOTES DE BAS DE PAGE : Ne génère AUCUNE note de bas de page dans cette section (${chapterTitle}).`;
+  }
+
+  let docTypeStr = project.documentType || "document académique";
   let specificInstructions = "";
 
   if (project.documentType === 'tp') {
@@ -304,6 +340,16 @@ export const generateChapterContent = async (
   - La conclusion doit être courte (1 à 2 pages maximum).
   - Aucune annexe ne doit être générée.
     `;
+  } else if (project.documentType === 'memoire') {
+    docTypeStr = "mémoire académique";
+  } else {
+    // Custom document type
+    specificInstructions = `
+  CONSIGNES SPÉCIFIQUES POUR CE DOCUMENT (${project.documentType}) :
+  - Adapte-toi strictement au sujet et aux consignes de l'utilisateur.
+  - Le contenu doit être direct, pertinent et répondre exactement à ce qui est demandé.
+  - Fais un effort particulier pour respecter le volume attendu (environ ${targetWords} mots pour cette partie) afin d'atteindre le nombre de pages global demandé par l'utilisateur.
+    `;
   }
 
   const prompt = `Tu es un expert académique. Rédige le contenu complet de la section suivante pour un ${docTypeStr} de niveau ${project.level}.
@@ -329,18 +375,11 @@ export const generateChapterContent = async (
   - Adapte le contenu au contexte local (${project.country}) si pertinent.
   - IMPORTANT (DATES ET RÉFÉRENCES) : Les délimitations temporelles du sujet doivent s'étendre jusqu'à une période très récente (idéalement jusqu'à l'année en cours, ${currentYear}). De même, si tu cites des sites web dans les notes de bas de page ou la bibliographie, la "date de consultation" doit être de l'année en cours (${currentYear}).
   - Utilise des citations réelles ou réalistes respectant la norme ${project.norm}.
-  ${shouldHaveFootnotes ? `- IMPORTANT (NOTES DE BAS DE PAGE ET RÉFÉRENCES) : 
-    1. Tu DOIS générer un TRÈS GRAND NOMBRE de notes de bas de page (au moins 10 à 15 par chapitre). C'est une exigence académique stricte.
-    2. Insère une note de bas de page à CHAQUE FOIS que tu cites un auteur, un chiffre, une donnée sensible, une statistique, une définition technique, une théorie importante ou un fait historique.
-    3. Utilise STRICTEMENT la norme bibliographique sélectionnée : ${project.norm}.
-    4. La numérotation des notes doit être séquentielle, claire et commencer à 1 pour chaque chapitre. Utilise la syntaxe Markdown standard : place [^1], [^2], etc. EXACTEMENT à l'endroit de la citation dans le texte, juste après le mot ou la phrase concernée.
-       Exemple dans le texte : "Selon Bourdieu, la reproduction sociale est un mécanisme clé [^1]."
-    5. Définis TOUTES les notes de bas de page à la toute fin du texte généré, en utilisant le format : 
-       [^1]: Nom de l'auteur, Titre de l'ouvrage, Éditeur, Année, Page. (formaté selon la norme ${project.norm})
-    6. ASSURE-TOI qu'il n'y a aucune confusion : la note [^X] à la fin du texte doit correspondre EXACTEMENT à l'appel de note [^X] dans le texte, et citer le bon auteur ou la bonne source. Ne mélange pas les références.` : `- INTERDICTION STRICTE DE NOTES DE BAS DE PAGE : Ne génère AUCUNE note de bas de page dans cette section (${chapterTitle}).`}
+  ${footnoteInstruction}
   ${isIntroduction || isConclusion ? `- INTERDICTION STRICTE DE TABLEAUX : Ne génère AUCUN tableau dans cette section (${isIntroduction ? "l'introduction" : "la conclusion"}). Les tableaux sont strictement réservés au développement du travail.` : `- IMPORTANT (TABLEAUX) : Intègre de VRAIS tableaux Markdown bien formatés (avec les balises | et -) pour présenter des données, des comparaisons ou des statistiques. N'utilise pas d'autres signes ou balises HTML.`}
   - Le contenu doit être extrêmement riche, détaillé et exhaustif.
-  - Vise STRICTEMENT environ ${targetWords} mots pour cette section. C'est CRUCIAL pour atteindre l'objectif global de ${project.min_pages} pages pour le document complet. Ne sois ni trop court ni trop long.
+  - NE RÉPÈTE PAS LE TITRE DE LA SECTION ("${chapterTitle}") au début de ton texte. Commence directement par le contenu ou les sous-titres de niveau inférieur (ex: ## 1.1. Titre).
+  - Vise STRICTEMENT environ ${targetWords} mots pour cette section. C'est une EXIGENCE ABSOLUE pour atteindre l'objectif global de ${project.min_pages} pages fixé par l'utilisateur. Tu dois générer suffisamment de texte, d'analyses et d'exemples pour atteindre ce volume. Ne sois ni trop court ni trop long.
   - Développe chaque point avec des exemples, des analyses, des citations et des arguments solides. Ne sois pas superficiel.
   - Assure une transition fluide entre les sous-sections.
 
