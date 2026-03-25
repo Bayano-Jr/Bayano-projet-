@@ -40,7 +40,7 @@ export default function Dashboard({ onNewProject, onCustomProject, onSelectProje
         return loadProjects(retries + 1);
       }
 
-      setError(err.message || "Impossible de charger vos projets.");
+      setError(err.message || t('dashboard.defaultLoadError'));
       if (err.message.includes("Non autorisé") && onSessionError) {
         onSessionError();
       }
@@ -72,7 +72,7 @@ export default function Dashboard({ onNewProject, onCustomProject, onSelectProje
             <button 
               onClick={() => loadProjects()}
               className="p-2 md:p-3 hover:bg-slate-50 rounded-2xl text-slate-200 hover:text-academic-900 transition-all group"
-              title="Actualiser la liste"
+              title={t('dashboard.refreshList')}
             >
               <RotateCcw size={20} className={`md:w-6 md:h-6 ${loading ? 'animate-spin' : 'group-hover:rotate-180'} transition-all duration-700`} />
             </button>
@@ -89,7 +89,7 @@ export default function Dashboard({ onNewProject, onCustomProject, onSelectProje
             className="bg-white border border-slate-200 text-academic-900 hover:bg-slate-50 w-full sm:w-auto group py-3 md:py-4 px-4 md:px-6 rounded-2xl flex items-center justify-center gap-2 md:gap-3 font-medium transition-all shadow-sm text-sm md:text-base"
           >
             <BookOpen size={18} className="text-accent md:w-5 md:h-5" />
-            {t('project.guide')}
+            {t('dashboard.guide')}
           </motion.button>
           <motion.button 
             whileHover={{ scale: 1.02 }}
@@ -107,13 +107,13 @@ export default function Dashboard({ onNewProject, onCustomProject, onSelectProje
             className="bg-indigo-50 border border-indigo-200 text-indigo-800 hover:bg-indigo-100 w-full sm:w-auto group py-3 md:py-4 px-4 md:px-6 rounded-2xl flex items-center justify-center gap-2 md:gap-3 font-medium transition-all shadow-sm text-sm md:text-base"
           >
             <FileText size={18} className="text-indigo-600 md:w-5 md:h-5" />
-            Travail sur mesure
+            {t('dashboard.customWork')}
           </motion.button>
           <motion.button 
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
             onClick={() => {
-              const btn = document.querySelector('button[title="Assistant IA"]') as HTMLButtonElement;
+              const btn = document.querySelector(`button[title="${t('dashboard.aiAssistantTitle')}"]`) as HTMLButtonElement;
               if (btn) btn.click();
               else window.dispatchEvent(new CustomEvent('open-chat'));
             }}
@@ -126,13 +126,13 @@ export default function Dashboard({ onNewProject, onCustomProject, onSelectProje
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
             onClick={() => {
-              const btn = document.querySelector('button[title="Anti-Plagiat"]') as HTMLButtonElement;
+              const btn = document.querySelector(`button[title="${t('dashboard.antiPlagiarismTitle')}"]`) as HTMLButtonElement;
               if (btn) btn.click();
             }}
             className="bg-slate-900 border border-slate-800 text-white hover:bg-slate-800 w-full sm:w-auto group py-3 md:py-4 px-4 md:px-6 rounded-2xl flex items-center justify-center gap-2 md:gap-3 font-medium transition-all shadow-lg shadow-slate-900/20 text-sm md:text-base"
           >
             <Search size={18} className="text-slate-300 md:w-5 md:h-5" />
-            Anti-Plagiat
+            {t('dashboard.antiPlagiarism')}
           </motion.button>
         </div>
       </header>
@@ -145,25 +145,25 @@ export default function Dashboard({ onNewProject, onCustomProject, onSelectProje
       {loading ? (
         <div className="flex flex-col items-center justify-center p-20">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-academic-900 mb-4"></div>
-          <p className="text-slate-400 font-serif italic">Chargement de votre bibliothèque...</p>
+          <p className="text-slate-400 font-serif italic">{t('dashboard.loadingLibrary')}</p>
         </div>
       ) : error ? (
         <div className="glass-card p-12 text-center border-red-100 bg-red-50/30">
           <div className="bg-red-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 text-red-500">
             <Clock size={40} />
           </div>
-          <h2 className="text-2xl mb-4 text-red-900">Erreur de chargement</h2>
+          <h2 className="text-2xl mb-4 text-red-900">{t('dashboard.loadingError')}</h2>
           <p className="text-red-600 mb-8 max-w-md mx-auto">{error}</p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <button onClick={() => window.location.reload()} className="btn-primary bg-red-600 hover:bg-red-700">
-              Réessayer
+              {t('dashboard.retry')}
             </button>
             {error.includes("reconnecter") && (
               <button 
                 onClick={() => onSessionError?.()} 
                 className="btn-secondary border-red-200 text-red-700 hover:bg-red-50"
               >
-                Se reconnecter
+                {t('dashboard.reconnect')}
               </button>
             )}
           </div>
@@ -203,9 +203,9 @@ export default function Dashboard({ onNewProject, onCustomProject, onSelectProje
                     project.status === 'generating' ? 'bg-amber-50 text-amber-700 border-amber-100' :
                     'bg-slate-50 text-slate-600 border-slate-100'
                   }`}>
-                    {project.status === 'completed' ? 'Terminé' :
-                     project.status === 'generating' ? 'Rédaction' :
-                     project.status === 'plan_validated' ? 'Plan Prêt' : 'Brouillon'}
+                    {project.status === 'completed' ? t('dashboard.status.completed') :
+                     project.status === 'generating' ? t('dashboard.status.generating') :
+                     project.status === 'plan_validated' ? t('dashboard.status.planValidated') : t('dashboard.status.draft')}
                   </span>
                 </div>
               </div>
@@ -219,20 +219,20 @@ export default function Dashboard({ onNewProject, onCustomProject, onSelectProje
                   {new Date(project.created_at).toLocaleDateString()}
                 </div>
                 <div className="flex items-center gap-2 text-accent font-bold text-xs group-hover:translate-x-1 transition-transform">
-                  Consulter <ArrowRight size={14} />
+                  {t('dashboard.view')} <ArrowRight size={14} />
                 </div>
               </div>
               
               <div className="grid grid-cols-2 gap-4 mb-10">
                 <div className="flex flex-col gap-1">
-                  <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Date</span>
+                  <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">{t('dashboard.date')}</span>
                   <div className="flex items-center gap-2 text-sm font-medium text-slate-600">
                     <Clock size={14} className="text-accent" />
                     {new Date(project.created_at).toLocaleDateString('fr-FR', { month: 'short', day: 'numeric' })}
                   </div>
                 </div>
                 <div className="flex flex-col gap-1">
-                  <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Niveau</span>
+                  <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">{t('dashboard.level')}</span>
                   <div className="flex items-center gap-2 text-sm font-medium text-slate-600">
                     <BookOpen size={14} className="text-accent" />
                     {project.level}
@@ -242,7 +242,7 @@ export default function Dashboard({ onNewProject, onCustomProject, onSelectProje
               
               <div className="flex items-center justify-between pt-8 border-t border-slate-50">
                 <span className="text-academic-900 font-bold text-xs uppercase tracking-[0.2em] flex items-center gap-2 group-hover:text-accent transition-colors">
-                  Continuer <ArrowRight size={16} className="group-hover:translate-x-2 transition-transform" />
+                  {t('dashboard.continue')} <ArrowRight size={16} className="group-hover:translate-x-2 transition-transform" />
                 </span>
                 {project.status === 'completed' && (
                   <motion.div 

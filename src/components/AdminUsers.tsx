@@ -18,7 +18,7 @@ export default function AdminUsers() {
   const fetchUsers = async () => {
     try {
       const headers: Record<string, string> = {};
-      const sid = localStorage.getItem('bayano_sid');
+      const sid = localStorage.getItem('bayano_admin_token');
       if (sid) {
         headers['Authorization'] = `Bearer ${sid}`;
       }
@@ -50,7 +50,7 @@ export default function AdminUsers() {
   const handleSave = async (user: User) => {
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      const sid = localStorage.getItem('bayano_sid');
+      const sid = localStorage.getItem('bayano_admin_token');
       if (sid) {
         headers['Authorization'] = `Bearer ${sid}`;
       }
@@ -79,7 +79,7 @@ export default function AdminUsers() {
       onConfirm: async () => {
         try {
           const headers: Record<string, string> = {};
-          const sid = localStorage.getItem('bayano_sid');
+          const sid = localStorage.getItem('bayano_admin_token');
           if (sid) {
             headers['Authorization'] = `Bearer ${sid}`;
           }

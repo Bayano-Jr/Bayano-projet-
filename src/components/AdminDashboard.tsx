@@ -8,7 +8,7 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     const headers: Record<string, string> = {};
-    const sid = localStorage.getItem('bayano_sid');
+    const sid = localStorage.getItem('bayano_admin_token');
     if (sid) {
       headers['Authorization'] = `Bearer ${sid}`;
     }

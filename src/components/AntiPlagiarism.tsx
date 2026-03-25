@@ -7,6 +7,7 @@ import { Document, Packer, Paragraph, TextRun } from 'docx';
 import { detectAIContent, paraphraseText } from '../services/geminiService';
 import { extractTextFromDocx } from '../utils/docxUtils';
 import { useAlert } from '../contexts/AlertContext';
+import { getAuthToken } from '../utils/auth';
 
 // Set worker for pdfjs
 pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
@@ -29,16 +30,14 @@ export default function AntiPlagiarism({ onBack, user, onUpdateUser, onShowPrici
   const [fileName, setFileName] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isParaphrasing, setIsParaphrasing] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<{ aiProbability: number, humanProbability: number } | null>(null);
   const [paraphrasedText, setParaphrasedText] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  const processFile = async (file: File) => {
     setFileName(file.name);
     setError(null);
     setAnalysisResult(null);
@@ -60,21 +59,47 @@ export default function AntiPlagiarism({ onBack, user, onUpdateUser, onShowPrici
           extractedText = await extractTextFromDocx(arrayBuffer);
         } catch (docxErr: any) {
           console.error("Docx error:", docxErr);
-          throw new Error("Erreur lors de la lecture du fichier DOCX. Assurez-vous qu'il s'agit d'un fichier Word valide.");
+          throw new Error(t('antiPlagiarism.errorDocx'));
         }
       } else {
-        throw new Error("Format de fichier non supporté. Veuillez utiliser un PDF ou DOCX.");
+        throw new Error(t('antiPlagiarism.errorFormat'));
       }
 
       setFileText(extractedText);
     } catch (err: any) {
       console.error("Error reading file:", err);
-      setError(err.message || "Erreur lors de la lecture du fichier.");
+      setError(err.message || t('antiPlagiarism.errorRead'));
       setFileName(null);
     }
     
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
+    }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await processFile(file);
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+    
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      await processFile(file);
     }
   };
 
@@ -99,14 +124,14 @@ export default function AntiPlagiarism({ onBack, user, onUpdateUser, onShowPrici
     try {
       // Deduct credits
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      const sid = localStorage.getItem('bayano_sid');
+      const sid = await getAuthToken();
       if (sid) {
         headers['Authorization'] = `Bearer ${sid}`;
       }
       const deductRes = await fetch('/api/saas/deduct', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ amount: 1, description: `Analyse anti-plagiat IA` }),
+        body: JSON.stringify({ amount: 1, description: t('antiPlagiarism.creditDeductDescAnalyze') }),
         credentials: 'include'
       });
       
@@ -114,8 +139,8 @@ export default function AntiPlagiarism({ onBack, user, onUpdateUser, onShowPrici
         const deductData = await deductRes.json();
         onUpdateUser({ ...user, credits: deductData.remainingCredits });
       } else {
-        console.error("Erreur de déduction de crédits");
-        setError("Erreur de déduction de crédits");
+        console.error(t('antiPlagiarism.creditDeductError'));
+        setError(t('antiPlagiarism.creditDeductError'));
         setIsAnalyzing(false);
         return;
       }
@@ -148,14 +173,14 @@ export default function AntiPlagiarism({ onBack, user, onUpdateUser, onShowPrici
     try {
       // Deduct credits
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      const sid = localStorage.getItem('bayano_sid');
+      const sid = await getAuthToken();
       if (sid) {
         headers['Authorization'] = `Bearer ${sid}`;
       }
       const deductRes = await fetch('/api/saas/deduct', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ amount: 1, description: `Paraphrase anti-plagiat IA` }),
+        body: JSON.stringify({ amount: 1, description: t('antiPlagiarism.creditDeductDescParaphrase') }),
         credentials: 'include'
       });
       
@@ -163,8 +188,8 @@ export default function AntiPlagiarism({ onBack, user, onUpdateUser, onShowPrici
         const deductData = await deductRes.json();
         onUpdateUser({ ...user, credits: deductData.remainingCredits });
       } else {
-        console.error("Erreur de déduction de crédits");
-        setError("Erreur de déduction de crédits");
+        console.error(t('antiPlagiarism.creditDeductError'));
+        setError(t('antiPlagiarism.creditDeductError'));
         setIsParaphrasing(false);
         return;
       }
@@ -211,7 +236,7 @@ export default function AntiPlagiarism({ onBack, user, onUpdateUser, onShowPrici
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error("Error generating DOCX:", err);
-      showAlert({ message: "Erreur lors de la création du fichier DOCX.", type: 'error' });
+      showAlert({ message: t('antiPlagiarism.exportError'), type: 'error' });
     }
   };
 
@@ -262,21 +287,26 @@ export default function AntiPlagiarism({ onBack, user, onUpdateUser, onShowPrici
                   className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${inputMode === 'text' ? 'bg-white text-academic-900 shadow-sm' : 'text-slate-500 hover:text-academic-900'}`}
                 >
                   <Type size={16} />
-                  Texte Libre
+                  {t('antiPlagiarism.textMode')}
                 </button>
                 <button
                   onClick={() => setInputMode('file')}
                   className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all ${inputMode === 'file' ? 'bg-white text-academic-900 shadow-sm' : 'text-slate-500 hover:text-academic-900'}`}
                 >
                   <FileUp size={16} />
-                  Document
+                  {t('antiPlagiarism.fileMode')}
                 </button>
               </div>
 
               {inputMode === 'file' && (
                 <div className="flex-1 flex flex-col">
                   {!fileName ? (
-                    <div className="flex-1 border-2 border-dashed border-slate-200 rounded-2xl p-8 flex flex-col items-center justify-center text-center hover:bg-slate-50 transition-colors min-h-[300px]">
+                    <div 
+                      className={`flex-1 border-2 border-dashed rounded-2xl p-8 flex flex-col items-center justify-center text-center transition-colors min-h-[300px] ${isDragging ? 'border-accent bg-accent/5' : 'border-slate-200 hover:bg-slate-50'}`}
+                      onDragOver={handleDragOver}
+                      onDragLeave={handleDragLeave}
+                      onDrop={handleDrop}
+                    >
                       <input
                         type="file"
                         ref={fileInputRef}
@@ -293,11 +323,11 @@ export default function AntiPlagiarism({ onBack, user, onUpdateUser, onShowPrici
                           <Upload size={32} />
                         </div>
                         <span className="text-lg font-bold text-academic-900 mb-2">
-                          Glissez-déposez votre fichier ici
+                          {t('antiPlagiarism.dropFileHere')}
                         </span>
-                        <span className="text-sm text-slate-500 mb-6">ou cliquez pour parcourir (PDF, DOCX)</span>
+                        <span className="text-sm text-slate-500 mb-6">{t('antiPlagiarism.supportedFormats')}</span>
                         <span className="px-6 py-3 bg-academic-900 text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-academic-800 transition-colors">
-                          Sélectionner un fichier
+                          {t('antiPlagiarism.browseFiles')}
                         </span>
                       </label>
                     </div>
@@ -310,7 +340,7 @@ export default function AntiPlagiarism({ onBack, user, onUpdateUser, onShowPrici
                           </div>
                           <div>
                             <h4 className="font-bold text-academic-900">{fileName}</h4>
-                            <p className="text-xs text-emerald-600 font-medium">Fichier chargé avec succès</p>
+                            <p className="text-xs text-emerald-600 font-medium">{t('antiPlagiarism.fileImported')}</p>
                           </div>
                         </div>
                         <button 
@@ -319,7 +349,7 @@ export default function AntiPlagiarism({ onBack, user, onUpdateUser, onShowPrici
                             setFileText('');
                           }}
                           className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                          title="Supprimer le fichier"
+                          title={t('antiPlagiarism.removeFile')}
                         >
                           <Trash2 size={18} />
                         </button>
@@ -327,18 +357,18 @@ export default function AntiPlagiarism({ onBack, user, onUpdateUser, onShowPrici
                       
                       <div className="flex justify-between items-center mb-4 mt-4">
                         <label className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">
-                          Aperçu du texte extrait
+                          {t('antiPlagiarism.previewExtractedText')}
                         </label>
                         <div className="text-xs font-medium text-slate-400 flex gap-4">
-                          <span>{wordCount} mots</span>
-                          <span>{charCount} caractères</span>
+                          <span>{wordCount} {t('project.words')}</span>
+                          <span>{charCount} {t('antiPlagiarism.characters')}</span>
                         </div>
                       </div>
                       <div className="flex-1 w-full min-h-[200px] p-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm text-slate-600 overflow-y-auto font-serif">
-                        {fileText ? fileText.substring(0, 1000) + (fileText.length > 1000 ? '...' : '') : 'Aucun texte extrait.'}
+                        {fileText ? fileText.substring(0, 1000) + (fileText.length > 1000 ? '...' : '') : t('antiPlagiarism.noExtractedText')}
                       </div>
                       <div className="mt-4 p-4 bg-amber-50 border border-amber-100 rounded-xl text-xs text-amber-800">
-                        <strong>Note :</strong> L'extraction se concentre sur le texte brut pour l'analyse. La mise en page complexe ne sera pas affichée ici.
+                        {t('antiPlagiarism.extractionNote')}
                       </div>
                     </div>
                   )}
@@ -349,11 +379,11 @@ export default function AntiPlagiarism({ onBack, user, onUpdateUser, onShowPrici
                 <div className="flex-1 flex flex-col">
                   <div className="flex justify-between items-center mb-4">
                     <label className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">
-                      Texte source
+                      {t('antiPlagiarism.sourceText')}
                     </label>
                     <div className="text-xs font-medium text-slate-400 flex gap-4">
-                      <span>{wordCount} mots</span>
-                      <span>{charCount} caractères</span>
+                      <span>{wordCount} {t('project.words')}</span>
+                      <span>{charCount} {t('antiPlagiarism.characters')}</span>
                     </div>
                   </div>
                   <textarea
@@ -398,7 +428,7 @@ export default function AntiPlagiarism({ onBack, user, onUpdateUser, onShowPrici
                     className="w-full py-3 rounded-xl font-bold text-xs uppercase tracking-widest text-slate-500 hover:text-red-600 hover:bg-red-50 transition-colors flex items-center justify-center gap-2 border border-slate-200 hover:border-red-200"
                   >
                     <Trash2 size={16} />
-                    Nettoyer et recommencer
+                    {t('antiPlagiarism.clearAndRestart')}
                   </button>
                 )}
               </div>
@@ -420,9 +450,9 @@ export default function AntiPlagiarism({ onBack, user, onUpdateUser, onShowPrici
                     <div className="w-24 h-24 border-4 border-slate-100 border-t-academic-900 rounded-full animate-spin"></div>
                     <Sparkles className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-academic-900" size={32} />
                   </div>
-                  <h3 className="text-2xl font-serif font-bold text-academic-900 mb-2">Analyse en cours...</h3>
+                  <h3 className="text-2xl font-serif font-bold text-academic-900 mb-2">{t('antiPlagiarism.analyzingTitle')}</h3>
                   <p className="text-slate-500 max-w-sm">
-                    L'IA examine la structure linguistique, la perplexité et la variation des phrases de votre document.
+                    {t('antiPlagiarism.analyzingDesc')}
                   </p>
                 </motion.div>
               )}
@@ -439,9 +469,9 @@ export default function AntiPlagiarism({ onBack, user, onUpdateUser, onShowPrici
                     <div className="w-24 h-24 border-4 border-accent/20 border-t-accent rounded-full animate-spin"></div>
                     <RefreshCw className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-accent" size={32} />
                   </div>
-                  <h3 className="text-2xl font-serif font-bold text-academic-900 mb-2">Paraphrase en cours...</h3>
+                  <h3 className="text-2xl font-serif font-bold text-academic-900 mb-2">{t('antiPlagiarism.paraphrasingTitle')}</h3>
                   <p className="text-slate-500 max-w-sm">
-                    Reformulation académique du texte pour garantir son authenticité tout en conservant le sens original.
+                    {t('antiPlagiarism.paraphrasingDesc')}
                   </p>
                   
                   <div className="w-full max-w-xs mt-8 h-2 bg-slate-100 rounded-full overflow-hidden">
@@ -500,17 +530,17 @@ export default function AntiPlagiarism({ onBack, user, onUpdateUser, onShowPrici
                     <div className="mt-8 p-6 bg-orange-50 border border-orange-100 rounded-2xl">
                       <h4 className="text-orange-900 font-bold mb-2 flex items-center gap-2">
                         <AlertCircle size={18} />
-                        Risque de plagiat IA détecté
+                        {t('antiPlagiarism.plagiarismRiskTitle')}
                       </h4>
                       <p className="text-sm text-orange-800 leading-relaxed">
-                        Ce texte présente une forte probabilité d'avoir été généré par une IA. Nous vous recommandons d'utiliser l'outil de paraphrase pour le reformuler et garantir l'authenticité de votre travail.
+                        {t('antiPlagiarism.plagiarismRiskDesc')}
                       </p>
                       <button
                         onClick={handleParaphrase}
                         className="mt-4 px-4 py-2 bg-orange-600 text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-orange-700 transition-colors flex items-center gap-2"
                       >
                         <RefreshCw size={14} />
-                        Paraphraser maintenant
+                        {t('antiPlagiarism.paraphraseNow')}
                       </button>
                     </div>
                   )}
@@ -543,7 +573,7 @@ export default function AntiPlagiarism({ onBack, user, onUpdateUser, onShowPrici
                         className="flex-1 sm:flex-none flex justify-center items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-white hover:bg-academic-800 transition-colors bg-academic-900 px-3 py-2 rounded-xl shadow-md"
                       >
                         <Download size={14} />
-                        Télécharger (DOCX)
+                        {t('antiPlagiarism.downloadDocx')}
                       </button>
                     </div>
                   </div>
@@ -567,9 +597,9 @@ export default function AntiPlagiarism({ onBack, user, onUpdateUser, onShowPrici
                   <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center shadow-sm mb-6 text-slate-300">
                     <FileText size={40} />
                   </div>
-                  <h3 className="text-xl font-serif font-bold text-slate-400 mb-2">En attente d'analyse</h3>
+                  <h3 className="text-xl font-serif font-bold text-slate-400 mb-2">{t('antiPlagiarism.waitingAnalysis')}</h3>
                   <p className="text-slate-400 text-sm max-w-sm">
-                    Collez votre texte ou importez un fichier, puis cliquez sur Analyser ou Paraphraser pour voir les résultats ici.
+                    {t('antiPlagiarism.waitingAnalysisDesc')}
                   </p>
                 </motion.div>
               )}

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Send, Bot, User, Loader2, FileText, Trash2, Copy, Share2, ThumbsUp, Check, Menu, Plus, Paperclip, Mic, Square, X, Image as ImageIcon, MessageSquare } from 'lucide-react';
+import { Send, Bot, User, Loader2, FileText, Trash2, Copy, Share2, ThumbsUp, Check, Menu, Plus, Paperclip, Mic, Square, X, Image as ImageIcon, MessageSquare, Upload } from 'lucide-react';
 import { GoogleGenAI } from '@google/genai';
 import ReactMarkdown from 'react-markdown';
 import { useTranslation } from 'react-i18next';
@@ -18,6 +18,8 @@ interface Attachment {
   mimeType: string;
   data: string; // base64 without prefix
 }
+
+import { getAuthToken } from '../utils/auth';
 
 interface Message {
   id: string;
@@ -53,6 +55,7 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
   const [model, setModel] = useState('gemini-3-flash-preview');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
+  const [isDragging, setIsDragging] = useState(false);
   
   // Attachments & Audio
   const [attachments, setAttachments] = useState<{file: File, base64: string, mimeType: string}[]>([]);
@@ -118,11 +121,11 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
   const createNewSession = async () => {
     const newSession: ChatSession = {
       id: Date.now().toString(),
-      title: 'Nouvelle discussion',
+      title: t('chat.newChat'),
       messages: [{
         id: Date.now().toString(),
         role: 'assistant',
-        content: "Bonjour ! Je suis Bayano, votre assistant IA. Comment puis-je vous aider aujourd'hui ?",
+        content: t('chat.welcome'),
         timestamp: new Date()
       }],
       updatedAt: new Date()
@@ -133,8 +136,7 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
     await saveSessionToDb(newSession);
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
+  const processFiles = (files: File[]) => {
     files.forEach(file => {
       const reader = new FileReader();
       reader.readAsDataURL(file);
@@ -147,7 +149,32 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
         }]);
       };
     });
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    processFiles(files);
     if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+    
+    const files = Array.from(e.dataTransfer.files || []);
+    if (files.length > 0) {
+      processFiles(files);
+    }
   };
 
   const removeAttachment = (index: number) => {
@@ -184,7 +211,7 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
       setIsRecording(true);
     } catch (err) {
       console.error("Error accessing microphone", err);
-      showAlert({ message: "Impossible d'accéder au microphone. Veuillez vérifier vos permissions.", type: 'error' });
+      showAlert({ message: t('chat.micError'), type: 'error' });
     }
   };
 
@@ -207,14 +234,14 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
     // Deduct credits
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      const sid = localStorage.getItem('bayano_sid');
+      const sid = await getAuthToken();
       if (sid) {
         headers['Authorization'] = `Bearer ${sid}`;
       }
       const deductRes = await fetch('/api/saas/deduct', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ amount: 1, description: `Message Chat IA` }),
+        body: JSON.stringify({ amount: 1, description: t('chat.creditDeductDesc') }),
         credentials: 'include'
       });
       
@@ -222,7 +249,7 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
         const deductData = await deductRes.json();
         onUpdateUser({ ...user, credits: deductData.remainingCredits });
       } else {
-        console.error("Erreur de déduction de crédits");
+        console.error(t('chat.creditDeductError'));
         return;
       }
     } catch (e) {
@@ -235,7 +262,7 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
     let currentSessions = [...sessions];
     
     if (!sessionId) {
-      newTitle = input.trim().substring(0, 30) || 'Nouvelle discussion';
+      newTitle = input.trim().substring(0, 30) || t('chat.newChat');
       const newSession: ChatSession = {
         id: Date.now().toString(),
         title: newTitle,
@@ -282,8 +309,8 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
       const ai = await getAiClient();
       
       // Build history for context (text only to save tokens, or we could send full history)
-      const historyText = messages.map(m => `${m.role === 'user' ? 'Utilisateur' : 'Assistant'}: ${m.content}`).join('\n\n');
-      const promptText = `${historyText}\n\nUtilisateur: ${userMessage.content}\n\nAssistant:`;
+      const historyText = messages.map(m => `${m.role === 'user' ? t('chat.user') : t('chat.assistant')}: ${m.content}`).join('\n\n');
+      const promptText = `${historyText}\n\n${t('chat.user')}: ${userMessage.content}\n\n${t('chat.assistant')}:`;
 
       const parts: any[] = [];
       if (promptText.trim()) parts.push({ text: promptText });
@@ -302,9 +329,7 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
         contents: { parts },
         config: {
           tools: [{ googleSearch: {} }],
-          systemInstruction: i18n.language.startsWith('en') 
-            ? "Your name is Bayano. You are a versatile AI assistant, extremely polite, courteous, and an expert in all fields (programming, writing, analysis, etc.). Always respond politely, clearly, precisely, and well-formatted in Markdown. You have access to Google Search, use it to provide up-to-date information and answer questions about current events."
-            : "Tu t'appelles Bayano. Tu es un assistant IA polyvalent, extrêmement poli, courtois et expert dans tous les domaines (programmation, rédaction, analyse, etc.). Réponds toujours de manière polie, claire, précise et bien formatée en Markdown. Tu as accès à la recherche Google, utilise-la pour fournir des informations à jour et répondre aux questions sur l'actualité.",
+          systemInstruction: t('chat.systemInstruction'),
         }
       });
 
@@ -313,7 +338,7 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: response.text || "Désolé, je n'ai pas pu générer de réponse.",
+        content: response.text || t('chat.noResponse'),
         groundingChunks: chunks,
         timestamp: new Date()
       };
@@ -331,7 +356,7 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: `**Erreur:** ${error.message || "Une erreur s'est produite."}`,
+        content: t('chat.error', { message: error.message || t('chat.defaultError') }),
         timestamp: new Date()
       };
       const updatedSessionsWithError = updatedSessions.map(s => s.id === sessionId ? {
@@ -356,9 +381,9 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
 
   const clearChat = async () => {
     showConfirm({
-      title: 'Effacer la conversation',
-      message: 'Voulez-vous vraiment effacer cette conversation ?',
-      confirmText: 'Effacer',
+      title: t('chat.clearChat'),
+      message: t('chat.clearChatConfirm'),
+      confirmText: t('chat.clear'),
       type: 'error',
       onConfirm: async () => {
         if (currentSessionId) {
@@ -380,7 +405,7 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
       await exportChatToDOCX(messages);
     } catch (error) {
       console.error("Export error:", error);
-      showAlert({ message: "Erreur lors de l'exportation.", type: 'error' });
+      showAlert({ message: t('chat.exportError'), type: 'error' });
     }
   };
 
@@ -393,7 +418,7 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
   const handleShare = (content: string) => {
     if (navigator.share) {
       navigator.share({
-        title: 'Réponse de l\'Assistant IA',
+        title: t('chat.aiResponseTitle'),
         text: content,
       }).catch((error) => {
         if (error.name !== 'AbortError' && !error.message?.includes('Share canceled')) {
@@ -402,7 +427,7 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
       });
     } else {
       navigator.clipboard.writeText(content);
-      showAlert({ message: "Texte copié dans le presse-papiers !", type: 'success' });
+      showAlert({ message: t('chat.textCopied'), type: 'success' });
     }
   };
 
@@ -428,7 +453,7 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
       {/* Sidebar */}
       <div className={`fixed inset-y-0 left-0 z-50 w-72 bg-slate-50 border-r border-slate-100 transform transition-transform duration-300 ease-in-out ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:relative md:translate-x-0 flex flex-col`}>
         <div className="p-4 border-b border-slate-100 flex justify-between items-center">
-          <h3 className="font-serif font-bold text-academic-900">Discussions</h3>
+          <h3 className="font-serif font-bold text-academic-900">{t('chat.discussions')}</h3>
           <button onClick={() => setIsSidebarOpen(false)} className="md:hidden p-2 text-slate-400 hover:text-academic-900 rounded-lg">
             <X size={20} />
           </button>
@@ -440,7 +465,7 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
             className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-academic-900 text-white rounded-xl font-bold text-sm hover:bg-academic-800 transition-colors shadow-sm"
           >
             <Plus size={16} />
-            Nouvelle discussion
+            {t('chat.newChat')}
           </button>
         </div>
 
@@ -464,7 +489,21 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
       </div>
 
       {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col h-full min-w-0 bg-white relative">
+      <div 
+        className={`flex-1 flex flex-col h-full min-w-0 relative transition-colors ${isDragging ? 'bg-accent/5 ring-2 ring-inset ring-accent' : 'bg-white'}`}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        {isDragging && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-white/80 backdrop-blur-sm">
+            <div className="flex flex-col items-center text-accent">
+              <Upload size={48} className="mb-4 animate-bounce" />
+              <h3 className="text-2xl font-bold font-serif">{t('chat.dropFilesHere')}</h3>
+              <p className="text-slate-500 mt-2">{t('chat.supportedFiles')}</p>
+            </div>
+          </div>
+        )}
         {/* Header */}
         <div className="px-4 py-3 md:py-4 border-b border-slate-100 flex justify-between items-center bg-white z-10 shadow-sm">
           <div className="flex items-center gap-3">
@@ -478,7 +517,7 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
               <Bot size={18} className="md:w-5 md:h-5" />
             </div>
             <div className="hidden sm:block">
-              <h2 className="text-base md:text-lg font-serif font-bold text-academic-900 truncate max-w-[200px] md:max-w-xs">{currentSession?.title || 'Nouvelle discussion'}</h2>
+              <h2 className="text-base md:text-lg font-serif font-bold text-academic-900 truncate max-w-[200px] md:max-w-xs">{currentSession?.title || t('chat.newChat')}</h2>
             </div>
           </div>
           
@@ -497,7 +536,7 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
               onClick={exportToWord}
               disabled={messages.length === 0}
               className="p-1 sm:p-1.5 md:p-2 text-slate-600 hover:bg-slate-50 rounded-lg disabled:opacity-50 transition-colors"
-              title="Exporter en Word"
+              title={t('chat.exportWordTooltip')}
             >
               <FileText size={16} className="sm:w-[18px] sm:h-[18px] md:w-5 md:h-5" />
             </button>
@@ -506,7 +545,7 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
               onClick={clearChat}
               disabled={!currentSessionId}
               className="p-1 sm:p-1.5 md:p-2 text-red-500 hover:bg-red-50 rounded-lg disabled:opacity-50 transition-colors"
-              title="Effacer la conversation"
+              title={t('chat.clearChatTooltip')}
             >
               <Trash2 size={16} className="sm:w-[18px] sm:h-[18px] md:w-5 md:h-5" />
             </button>
@@ -518,9 +557,9 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
           {messages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center opacity-50 px-4">
               <Bot size={48} className="md:w-16 md:h-16 mb-4 md:mb-6 text-slate-300" />
-              <h3 className="text-xl md:text-2xl font-serif font-bold text-academic-900 mb-2">Bonjour, je suis Bayano !</h3>
+              <h3 className="text-xl md:text-2xl font-serif font-bold text-academic-900 mb-2">{t('chat.helloBayano')}</h3>
               <p className="text-sm md:text-base text-slate-500 max-w-md">
-                Votre assistant IA polyvalent. Posez-moi des questions, envoyez-moi des documents (PDF, Word, Images) ou des messages vocaux.
+                {t('chat.bayanoIntro')}
               </p>
             </div>
           ) : (
@@ -559,7 +598,7 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
                         <ReactMarkdown>{msg.content}</ReactMarkdown>
                         {msg.groundingChunks && msg.groundingChunks.length > 0 && (
                           <div className="mt-4 pt-4 border-t border-slate-100">
-                            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Sources :</p>
+                            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">{t('chat.sources')}</p>
                             <ul className="flex flex-col gap-1 m-0 p-0 list-none">
                               {msg.groundingChunks.map((chunk, idx) => {
                                 if (chunk.web?.uri && chunk.web?.title) {
@@ -586,21 +625,21 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
                       <button 
                         onClick={() => handleCopy(msg.id, msg.content)}
                         className="p-1.5 text-slate-400 hover:text-academic-900 hover:bg-slate-100 rounded-lg transition-colors"
-                        title="Copier"
+                        title={t('chat.copyTooltip')}
                       >
                         {copiedId === msg.id ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
                       </button>
                       <button 
                         onClick={() => handleShare(msg.content)}
                         className="p-1.5 text-slate-400 hover:text-academic-900 hover:bg-slate-100 rounded-lg transition-colors"
-                        title="Partager"
+                        title={t('chat.shareTooltip')}
                       >
                         <Share2 size={14} />
                       </button>
                       <button 
                         onClick={() => handleLike(msg.id)}
                         className={`p-1.5 rounded-lg transition-colors ${likedIds.has(msg.id) ? 'text-accent bg-accent/10' : 'text-slate-400 hover:text-academic-900 hover:bg-slate-100'}`}
-                        title="J'aime"
+                        title={t('chat.likeTooltip')}
                       >
                         <ThumbsUp size={14} className={likedIds.has(msg.id) ? 'fill-current' : ''} />
                       </button>
@@ -617,7 +656,7 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
               </div>
               <div className="bg-white border border-slate-100 shadow-sm rounded-2xl rounded-tl-none p-4 md:p-5 flex items-center gap-3">
                 <Loader2 size={16} className="animate-spin text-accent" />
-                <span className="text-xs md:text-sm text-slate-500 font-medium">L'IA réfléchit...</span>
+                <span className="text-xs md:text-sm text-slate-500 font-medium">{t('chat.aiThinking')}</span>
               </div>
             </div>
           )}
@@ -650,7 +689,7 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
               <button 
                 onClick={() => fileInputRef.current?.click()} 
                 className="p-2 md:p-2.5 text-slate-400 hover:text-academic-900 hover:bg-slate-200 rounded-xl transition-colors shrink-0"
-                title="Joindre un fichier"
+                title={t('chat.attachFile')}
               >
                 <Paperclip size={20} className="md:w-5 md:h-5" />
               </button>
@@ -667,7 +706,7 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Écrivez votre message..."
+                placeholder={t('chat.writeMessage')}
                 className="flex-1 bg-transparent border-none focus:ring-0 resize-none py-2.5 px-2 text-sm md:text-base min-h-[44px] max-h-[120px] md:max-h-[200px] text-slate-800 placeholder:text-slate-400"
                 rows={input.split('\n').length > 1 ? Math.min(input.split('\n').length, 5) : 1}
               />
@@ -676,7 +715,7 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
                 <button 
                   onClick={stopRecording} 
                   className="p-2 md:p-2.5 text-red-500 bg-red-50 hover:bg-red-100 rounded-xl shrink-0 animate-pulse transition-colors"
-                  title="Arrêter l'enregistrement"
+                  title={t('chat.stopRecording')}
                 >
                   <Square size={20} className="fill-current md:w-5 md:h-5" />
                 </button>
@@ -684,7 +723,7 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
                 <button 
                   onClick={startRecording} 
                   className="p-2 md:p-2.5 text-slate-400 hover:text-academic-900 hover:bg-slate-200 rounded-xl transition-colors shrink-0"
-                  title="Message vocal"
+                  title={t('chat.voiceMessage')}
                 >
                   <Mic size={20} className="md:w-5 md:h-5" />
                 </button>

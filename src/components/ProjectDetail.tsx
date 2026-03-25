@@ -14,6 +14,8 @@ import { useTranslation } from 'react-i18next';
 import { convertDocxToHtml } from '../utils/docxUtils';
 import { useAlert } from '../contexts/AlertContext';
 
+import { getAuthToken } from '../utils/auth';
+
 interface ProjectDetailProps {
   projectId: string;
   onBack: () => void;
@@ -302,7 +304,7 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
     try {
       // Deduct credits
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      const sid = localStorage.getItem('bayano_sid');
+      const sid = await getAuthToken();
       if (sid) {
         headers['Authorization'] = `Bearer ${sid}`;
       }
@@ -556,7 +558,7 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
             className="bg-academic-900/10 hover:bg-academic-900/20 text-academic-900 w-full justify-center py-4 rounded-2xl border-none flex items-center gap-3 text-xs font-bold uppercase tracking-widest transition-all mb-4"
           >
             <FileText size={16} />
-            Citations & Sources
+            {t('projectDetail.citationsAndSources')}
           </button>
           
           <button 
@@ -569,7 +571,7 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
           <div className="grid grid-cols-2 gap-3">
             <button onClick={() => handleExportPDF()} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 justify-center py-4 rounded-2xl flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest transition-all">
               <FileDown size={14} />
-              PDF Rapide
+              {t('projectDetail.fastPdf')}
             </button>
             <button onClick={handlePrint} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 justify-center py-4 rounded-2xl flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest transition-all">
               <Printer size={14} />
@@ -581,14 +583,14 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
               const count = project.chapters?.length || 0;
               const words = project.chapters?.reduce((acc, c) => acc + (c.content?.length || 0), 0) || 0;
               showAlert({ 
-                title: 'Diagnostic', 
-                message: `- Chapitres trouvés: ${count}\n- Volume total: ${words} caractères\n- Status: ${project.status}\n\nSi vous ne voyez rien, essayez le bouton 'Actualiser' en haut.`,
+                title: t('projectDetail.diagnosticTitle'), 
+                message: t('projectDetail.diagnosticMessage', { count, words, status: project.status }),
                 type: 'info'
               });
             }}
             className="w-full py-2 text-[9px] text-slate-300 hover:text-slate-500 uppercase tracking-widest font-bold transition-colors"
           >
-            Diagnostic des données
+            {t('projectDetail.dataDiagnostic')}
           </button>
         </div>
       </div>
@@ -642,8 +644,8 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
                     <BookOpen size={20} />
                   </div>
                   <div>
-                    <h2 className="text-lg sm:text-xl font-serif font-bold text-academic-900">Note de bas de page</h2>
-                    <p className="text-[10px] sm:text-xs text-slate-500 uppercase tracking-widest font-medium mt-1">Détails de la source</p>
+                    <h2 className="text-lg sm:text-xl font-serif font-bold text-academic-900">{t('projectDetail.footnote')}</h2>
+                    <p className="text-[10px] sm:text-xs text-slate-500 uppercase tracking-widest font-medium mt-1">{t('projectDetail.sourceDetails')}</p>
                   </div>
                 </div>
                 <button 
@@ -662,7 +664,7 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
                 {isVerifyingFootnote ? (
                   <div className="flex flex-col items-center justify-center py-8 text-slate-400">
                     <Loader2 size={32} className="animate-spin mb-4 text-accent" />
-                    <p className="text-xs sm:text-sm font-medium uppercase tracking-widest text-center">Analyse de la source en cours...</p>
+                    <p className="text-xs sm:text-sm font-medium uppercase tracking-widest text-center">{t('projectDetail.analyzingSource')}</p>
                   </div>
                 ) : footnoteVerification ? (
                   <motion.div 
@@ -678,17 +680,17 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
                         <div>
                           <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-1">
                             <h3 className={`font-bold text-sm sm:text-base ${footnoteVerification.isReliable ? 'text-emerald-800' : 'text-amber-800'}`}>
-                              {footnoteVerification.isReliable ? 'Source Fiable' : 'Source Douteuse ou Non Académique'}
+                              {footnoteVerification.isReliable ? t('projectDetail.reliableSource') : t('projectDetail.doubtfulSource')}
                             </h3>
                             <span className={`text-[10px] sm:text-xs font-bold px-2 py-1 rounded-full ${footnoteVerification.isReliable ? 'bg-emerald-200 text-emerald-800' : 'bg-amber-200 text-amber-800'}`}>
-                              Score: {footnoteVerification.score}/100
+                              {t('projectDetail.score')}: {footnoteVerification.score}/100
                             </span>
                           </div>
-                          <p className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-slate-500">Type: {footnoteVerification.type}</p>
+                          <p className="text-[10px] sm:text-xs font-bold uppercase tracking-widest text-slate-500">{t('projectDetail.type')}: {footnoteVerification.type}</p>
                         </div>
                         
                         <div>
-                          <p className="text-[9px] sm:text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Évaluation</p>
+                          <p className="text-[9px] sm:text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">{t('projectDetail.evaluation')}</p>
                           <p className={`text-xs sm:text-sm ${footnoteVerification.isReliable ? 'text-emerald-700' : 'text-amber-700'}`}>
                             {footnoteVerification.explanation}
                           </p>
@@ -696,7 +698,7 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
                         
                         {footnoteVerification.provenance && footnoteVerification.provenance !== "Inconnue" && (
                           <div>
-                            <p className="text-[9px] sm:text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Provenance</p>
+                            <p className="text-[9px] sm:text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">{t('projectDetail.provenance')}</p>
                             <p className="text-xs sm:text-sm text-slate-700">
                               {footnoteVerification.provenance}
                             </p>
@@ -705,7 +707,7 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
 
                         {footnoteVerification.relevance && footnoteVerification.relevance !== "Inconnue" && footnoteVerification.relevance !== "Non applicable" && (
                           <div>
-                            <p className="text-[9px] sm:text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">Pertinence avec le sujet</p>
+                            <p className="text-[9px] sm:text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">{t('projectDetail.relevanceToSubject')}</p>
                             <p className="text-xs sm:text-sm text-slate-700">
                               {footnoteVerification.relevance}
                             </p>
@@ -773,13 +775,13 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
                 </div>
                 <div>
                   <h4 className="font-bold text-academic-900 text-sm sm:text-base">{t('projectDetail.generating')}</h4>
-                  <p className="text-[10px] sm:text-xs text-slate-500 font-medium mt-0.5 sm:mt-1">Le manuscrit s'enrichit automatiquement. Vous pouvez déjà consulter les parties terminées.</p>
+                  <p className="text-[10px] sm:text-xs text-slate-500 font-medium mt-0.5 sm:mt-1">{t('projectDetail.manuscriptEnriching')}</p>
                 </div>
               </div>
               <div className="text-left sm:text-right w-full sm:w-auto border-t sm:border-t-0 border-accent/10 pt-3 sm:pt-0 mt-2 sm:mt-0">
-                <div className="text-[10px] sm:text-xs font-bold text-accent uppercase tracking-widest mb-1">Volume actuel</div>
+                <div className="text-[10px] sm:text-xs font-bold text-accent uppercase tracking-widest mb-1">{t('projectDetail.currentVolume')}</div>
                 <div className="text-lg sm:text-xl font-serif text-academic-900">
-                  {project.chapters.reduce((acc, c) => acc + (c.word_count || 0), 0).toLocaleString()} <span className="text-xs sm:text-sm text-slate-400">mots</span>
+                  {project.chapters.reduce((acc, c) => acc + (c.word_count || 0), 0).toLocaleString()} <span className="text-xs sm:text-sm text-slate-400">{t('projectDetail.words')}</span>
                 </div>
               </div>
             </div>
@@ -829,7 +831,7 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
           <div className="max-w-4xl mx-auto bg-white shadow-[0_40px_120px_rgba(0,0,0,0.08)] p-6 sm:p-10 md:p-28 min-h-full rounded-[4px] border border-slate-100 relative" id="manuscript-content">
             {/* Page number indicator */}
             <div className="absolute top-6 right-6 md:top-10 md:right-10 text-[10px] font-bold text-slate-300 uppercase tracking-widest hidden print:block">
-              Folio {activeChapter === -1 ? 'i' : activeChapter === -2 ? 'Tout' : activeChapter + 1}
+              {t('projectDetail.folio')} {activeChapter === -1 ? 'i' : activeChapter === -2 ? t('projectDetail.all') : activeChapter + 1}
             </div>
             
             {activeChapter === -4 && wordPreviewHtml ? (
@@ -837,7 +839,7 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 md:mb-12 border-b border-slate-100 pb-6 md:pb-8 gap-4">
                   <div className="text-left w-full md:w-auto">
                     <h2 className="text-xs font-bold uppercase tracking-[0.3em] text-accent mb-2">{t('projectDetail.wordPreview')}</h2>
-                    <p className="text-slate-400 text-[10px] uppercase tracking-widest">Version enregistrée en base de données</p>
+                    <p className="text-slate-400 text-[10px] uppercase tracking-widest">{t('projectDetail.savedVersion')}</p>
                   </div>
                   <div className="flex flex-wrap gap-2 w-full md:w-auto">
                     {isEditingWordPreview ? (
@@ -870,16 +872,16 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
                 </div>
                 {isEditingWordPreview && (
                   <div className="flex flex-wrap gap-1 md:gap-2 mb-4 p-2 bg-slate-100 rounded-xl border border-slate-200 sticky top-4 z-10 shadow-sm overflow-x-auto no-scrollbar">
-                    <button onClick={() => document.execCommand('bold')} className="p-2 hover:bg-white rounded-lg text-slate-700 transition-colors shrink-0" title="Gras"><strong className="font-serif">B</strong></button>
-                    <button onClick={() => document.execCommand('italic')} className="p-2 hover:bg-white rounded-lg text-slate-700 transition-colors shrink-0" title="Italique"><em className="font-serif">I</em></button>
-                    <button onClick={() => document.execCommand('underline')} className="p-2 hover:bg-white rounded-lg text-slate-700 transition-colors shrink-0" title="Souligné"><u className="font-serif">U</u></button>
+                    <button onClick={() => document.execCommand('bold')} className="p-2 hover:bg-white rounded-lg text-slate-700 transition-colors shrink-0" title={t('projectDetail.bold')}><strong className="font-serif">B</strong></button>
+                    <button onClick={() => document.execCommand('italic')} className="p-2 hover:bg-white rounded-lg text-slate-700 transition-colors shrink-0" title={t('projectDetail.italic')}><em className="font-serif">I</em></button>
+                    <button onClick={() => document.execCommand('underline')} className="p-2 hover:bg-white rounded-lg text-slate-700 transition-colors shrink-0" title={t('projectDetail.underline')}><u className="font-serif">U</u></button>
                     <div className="w-px h-6 bg-slate-300 self-center mx-1 shrink-0"></div>
-                    <button onClick={() => document.execCommand('formatBlock', false, 'H1')} className="p-2 hover:bg-white rounded-lg text-slate-700 transition-colors text-xs font-bold shrink-0" title="Titre 1">H1</button>
-                    <button onClick={() => document.execCommand('formatBlock', false, 'H2')} className="p-2 hover:bg-white rounded-lg text-slate-700 transition-colors text-xs font-bold shrink-0" title="Titre 2">H2</button>
-                    <button onClick={() => document.execCommand('formatBlock', false, 'H3')} className="p-2 hover:bg-white rounded-lg text-slate-700 transition-colors text-xs font-bold shrink-0" title="Titre 3">H3</button>
+                    <button onClick={() => document.execCommand('formatBlock', false, 'H1')} className="p-2 hover:bg-white rounded-lg text-slate-700 transition-colors text-xs font-bold shrink-0" title={t('projectDetail.heading1')}>H1</button>
+                    <button onClick={() => document.execCommand('formatBlock', false, 'H2')} className="p-2 hover:bg-white rounded-lg text-slate-700 transition-colors text-xs font-bold shrink-0" title={t('projectDetail.heading2')}>H2</button>
+                    <button onClick={() => document.execCommand('formatBlock', false, 'H3')} className="p-2 hover:bg-white rounded-lg text-slate-700 transition-colors text-xs font-bold shrink-0" title={t('projectDetail.heading3')}>H3</button>
                     <div className="w-px h-6 bg-slate-300 self-center mx-1 shrink-0 hidden sm:block"></div>
-                    <button onClick={() => document.execCommand('insertUnorderedList')} className="p-2 hover:bg-white rounded-lg text-slate-700 transition-colors text-xs font-bold shrink-0" title="Liste à puces">• Liste</button>
-                    <button onClick={() => document.execCommand('insertOrderedList')} className="p-2 hover:bg-white rounded-lg text-slate-700 transition-colors text-xs font-bold shrink-0" title="Liste numérotée">1. Liste</button>
+                    <button onClick={() => document.execCommand('insertUnorderedList')} className="p-2 hover:bg-white rounded-lg text-slate-700 transition-colors text-xs font-bold shrink-0" title={t('projectDetail.bulletList')}>• {t('projectDetail.list')}</button>
+                    <button onClick={() => document.execCommand('insertOrderedList')} className="p-2 hover:bg-white rounded-lg text-slate-700 transition-colors text-xs font-bold shrink-0" title={t('projectDetail.numberedList')}>1. {t('projectDetail.list')}</button>
                   </div>
                 )}
                 <div 
@@ -899,7 +901,7 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
                 
                 <div className="max-w-2xl mx-auto space-y-8 md:space-y-12">
                   <div className="p-6 md:p-10 bg-slate-50 rounded-[32px] md:rounded-[40px] border border-slate-100">
-                    <h3 className="text-base md:text-lg font-serif font-bold text-academic-900 mb-6 md:mb-8 border-b border-slate-200 pb-4">Introduction</h3>
+                    <h3 className="text-base md:text-lg font-serif font-bold text-academic-900 mb-6 md:mb-8 border-b border-slate-200 pb-4">{t('projectDetail.introduction')}</h3>
                     <div className="flex items-center gap-4 text-slate-600">
                       <div className="w-8 h-8 rounded-xl bg-white shadow-sm flex items-center justify-center text-accent font-bold text-xs shrink-0">I</div>
                       <span className="font-medium text-sm md:text-base">{getPlan().introduction?.titre || t('projectDetail.generalIntro')}</span>
@@ -907,7 +909,7 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
                   </div>
 
                   <div className="p-6 md:p-10 bg-slate-50 rounded-[32px] md:rounded-[40px] border border-slate-100">
-                    <h3 className="text-base md:text-lg font-serif font-bold text-academic-900 mb-6 md:mb-8 border-b border-slate-200 pb-4">Corps du Document</h3>
+                    <h3 className="text-base md:text-lg font-serif font-bold text-academic-900 mb-6 md:mb-8 border-b border-slate-200 pb-4">{t('projectDetail.documentBody')}</h3>
                     <div className="space-y-4 md:space-y-6">
                       {getPlan().chapitres?.map((chap: any, i: number) => (
                         <div key={i} className="flex items-center gap-4 text-slate-600">
@@ -919,7 +921,7 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
                   </div>
 
                   <div className="p-6 md:p-10 bg-slate-50 rounded-[32px] md:rounded-[40px] border border-slate-100">
-                    <h3 className="text-base md:text-lg font-serif font-bold text-academic-900 mb-6 md:mb-8 border-b border-slate-200 pb-4">Conclusion & Annexes</h3>
+                    <h3 className="text-base md:text-lg font-serif font-bold text-academic-900 mb-6 md:mb-8 border-b border-slate-200 pb-4">{t('projectDetail.conclusionAndAnnexes')}</h3>
                     <div className="space-y-4 md:space-y-6">
                       <div className="flex items-center gap-4 text-slate-600">
                         <div className="w-8 h-8 rounded-xl bg-white shadow-sm flex items-center justify-center text-accent font-bold text-xs">C</div>
@@ -947,8 +949,9 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
                     </div>
                     <h3 className="text-xl font-serif font-bold text-slate-400">{t('projectDetail.noContent')}</h3>
                     <p className="text-slate-400 text-sm max-w-xs mx-auto mt-2">
-                      Le contenu de ce manuscrit n'a pas pu être récupéré. 
-                      Essayez d'actualiser la page.
+                      {t('projectDetail.contentNotRecovered')}
+                      <br/>
+                      {t('projectDetail.tryRefreshing')}
                     </p>
                     <button 
                       onClick={handleRefresh}
@@ -967,23 +970,23 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
                             return (
                               <>
                                 <section>
-                                  <h2 className="text-xs font-bold uppercase tracking-[0.3em] text-slate-300 mb-10 text-center">Page de Garde</h2>
+                                  <h2 className="text-xs font-bold uppercase tracking-[0.3em] text-slate-300 mb-10 text-center">{t('projectDetail.coverPage')}</h2>
                                   <div className="whitespace-pre-wrap font-serif text-center border border-slate-100 p-12 md:p-20 bg-slate-50/50 rounded-sm shadow-inner text-academic-900 leading-relaxed">{fm.page_de_garde}</div>
                                 </section>
                                 {fm.dedicace && (
                                   <section className="py-12">
-                                    <h2 className="text-xs font-bold uppercase tracking-[0.3em] text-slate-300 mb-10 text-center">Dédicace</h2>
+                                    <h2 className="text-xs font-bold uppercase tracking-[0.3em] text-slate-300 mb-10 text-center">{t('projectDetail.dedication')}</h2>
                                     <p className="italic text-right italic font-serif text-xl text-slate-600 max-w-md ml-auto leading-relaxed">"{fm.dedicace}"</p>
                                   </section>
                                 )}
                                 {fm.remerciements && (
                                   <section>
-                                    <h2 className="text-xs font-bold uppercase tracking-[0.3em] text-slate-300 mb-10">Remerciements</h2>
+                                    <h2 className="text-xs font-bold uppercase tracking-[0.3em] text-slate-300 mb-10">{t('projectDetail.acknowledgements')}</h2>
                                     <p className="text-slate-700 leading-relaxed">{fm.remerciements}</p>
                                   </section>
                                 )}
                                 <section>
-                                  <h2 className="text-xs font-bold uppercase tracking-[0.3em] text-slate-300 mb-10">Résumé</h2>
+                                  <h2 className="text-xs font-bold uppercase tracking-[0.3em] text-slate-300 mb-10">{t('projectDetail.summary')}</h2>
                                   <p className="text-slate-700 leading-relaxed">{fm.resume_fr}</p>
                                 </section>
                                 <section>
@@ -992,7 +995,7 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
                                 </section>
                                 {fm.sigles && fm.sigles.length > 0 && (
                                   <section>
-                                    <h2 className="text-xs font-bold uppercase tracking-[0.3em] text-slate-300 mb-10">Liste des Sigles</h2>
+                                    <h2 className="text-xs font-bold uppercase tracking-[0.3em] text-slate-300 mb-10">{t('projectDetail.listOfAcronyms')}</h2>
                                     <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-12 gap-y-4">
                                       {fm.sigles.map((s: string, i: number) => (
                                         <li key={i} className="text-sm font-mono border-b border-slate-50 pb-2 text-slate-600">{s}</li>
@@ -1003,7 +1006,7 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
                               </>
                             );
                           } catch {
-                            return <p className="text-slate-400 italic">Éléments préliminaires en cours de préparation...</p>;
+                            return <p className="text-slate-400 italic">{t('projectDetail.preliminaryElementsPreparing')}</p>;
                           }
                         })()}
                       </div>
@@ -1106,13 +1109,13 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
                       <div className="space-y-4">
                         <div className="flex justify-between items-center">
                           <p className="text-xs md:text-sm font-medium text-green-600 flex items-center gap-1">
-                            <Check size={14} /> Proposition générée
+                            <Check size={14} /> {t('projectDetail.generatedProposal')}
                           </p>
                           <button 
                             onClick={() => setRefinedContent(null)}
                             className="text-[10px] md:text-xs text-gray-500 hover:text-accent flex items-center gap-1"
                           >
-                            <RotateCcw size={12} /> Recommencer
+                            <RotateCcw size={12} /> {t('projectDetail.restart')}
                           </button>
                         </div>
                         <div className="bg-white border border-gray-200 rounded-xl p-3 md:p-4 max-h-48 md:max-h-60 overflow-y-auto text-xs md:text-sm text-gray-600 whitespace-pre-wrap">
@@ -1120,10 +1123,10 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
                         </div>
                         <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 justify-end">
                           <button onClick={cancelRefinement} className="px-4 py-2 text-xs md:text-sm font-medium text-gray-500 hover:text-gray-700 order-2 sm:order-1">
-                            Annuler
+                            {t('projectDetail.cancel')}
                           </button>
                           <button onClick={applyRefinement} className="btn-primary bg-green-600 hover:bg-green-700 text-xs md:text-sm order-1 sm:order-2">
-                            Appliquer les modifications
+                            {t('projectDetail.applyChanges')}
                           </button>
                         </div>
                       </div>
@@ -1139,23 +1142,23 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
                         return (
                           <>
                             <section>
-                              <h2 className="text-xs font-bold uppercase tracking-[0.3em] text-slate-300 mb-10 text-center">Page de Garde</h2>
+                              <h2 className="text-xs font-bold uppercase tracking-[0.3em] text-slate-300 mb-10 text-center">{t('projectDetail.coverPage')}</h2>
                               <div className="whitespace-pre-wrap font-serif text-center border border-slate-100 p-12 md:p-20 bg-slate-50/50 rounded-sm shadow-inner text-academic-900 leading-relaxed">{fm.page_de_garde}</div>
                             </section>
                             {fm.dedicace && (
                               <section className="py-12">
-                                <h2 className="text-xs font-bold uppercase tracking-[0.3em] text-slate-300 mb-10 text-center">Dédicace</h2>
+                                <h2 className="text-xs font-bold uppercase tracking-[0.3em] text-slate-300 mb-10 text-center">{t('projectDetail.dedication')}</h2>
                                 <p className="italic text-right italic font-serif text-xl text-slate-600 max-w-md ml-auto leading-relaxed">"{fm.dedicace}"</p>
                               </section>
                             )}
                             {fm.remerciements && (
                               <section>
-                                <h2 className="text-xs font-bold uppercase tracking-[0.3em] text-slate-300 mb-10">Remerciements</h2>
+                                <h2 className="text-xs font-bold uppercase tracking-[0.3em] text-slate-300 mb-10">{t('projectDetail.acknowledgements')}</h2>
                                 <p className="text-slate-700 leading-relaxed">{fm.remerciements}</p>
                               </section>
                             )}
                             <section>
-                              <h2 className="text-xs font-bold uppercase tracking-[0.3em] text-slate-300 mb-10">Résumé</h2>
+                              <h2 className="text-xs font-bold uppercase tracking-[0.3em] text-slate-300 mb-10">{t('projectDetail.summary')}</h2>
                               <p className="text-slate-700 leading-relaxed">{fm.resume_fr}</p>
                             </section>
                             <section>
@@ -1164,7 +1167,7 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
                             </section>
                             {fm.sigles && fm.sigles.length > 0 && (
                               <section>
-                                <h2 className="text-xs font-bold uppercase tracking-[0.3em] text-slate-300 mb-10">Liste des Sigles</h2>
+                                <h2 className="text-xs font-bold uppercase tracking-[0.3em] text-slate-300 mb-10">{t('projectDetail.listOfAcronyms')}</h2>
                                 <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-12 gap-y-4">
                                   {fm.sigles.map((s: string, i: number) => (
                                     <li key={i} className="text-sm font-mono border-b border-slate-50 pb-2 text-slate-600">{s}</li>
@@ -1175,7 +1178,7 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
                           </>
                         );
                       } catch {
-                        return <p>Erreur de lecture des données.</p>;
+                        return <p>{t('projectDetail.dataReadError')}</p>;
                       }
                     })()}
                   </div>
@@ -1185,15 +1188,15 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
                       <div className="space-y-4 animate-in fade-in duration-300">
                         <div className="flex justify-between items-center mb-2">
                           <h3 className="text-sm font-bold text-academic-900 flex items-center gap-2">
-                            <Edit3 size={16} /> Mode Édition
+                            <Edit3 size={16} /> {t('projectDetail.editMode')}
                           </h3>
-                          <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Format Markdown supporté</span>
+                          <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">{t('projectDetail.markdownSupported')}</span>
                         </div>
                         <textarea
                           value={editContent}
                           onChange={(e) => setEditContent(e.target.value)}
                           className="w-full h-[600px] p-6 text-sm font-mono bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-accent focus:border-transparent resize-y shadow-inner"
-                          placeholder="Saisissez votre contenu en Markdown..."
+                          placeholder={t('projectDetail.enterMarkdownContent')}
                         />
                         <div className="flex flex-col sm:flex-row justify-end gap-3 pt-4">
                           <button
@@ -1238,7 +1241,7 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
                     ) : (
                       <div className="flex flex-col items-center justify-center py-20 text-slate-300">
                         <Loader2 size={40} className="animate-spin mb-4 opacity-20" />
-                        <p className="font-serif italic mb-6">Le contenu de cette partie est en cours de chargement ou vide...</p>
+                        <p className="font-serif italic mb-6">{t('projectDetail.contentLoadingOrEmpty')}</p>
                         <button 
                           onClick={handleRefresh}
                           className="px-6 py-2 bg-slate-50 hover:bg-slate-100 text-slate-400 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all border border-slate-100"
@@ -1253,7 +1256,7 @@ export default function ProjectDetail({ projectId, onBack, onSessionError, user,
             ) : (
               <div className="text-center py-20 text-gray-400">
                 <FileText size={64} className="mx-auto mb-4 opacity-20" />
-                <p>Sélectionnez une partie pour l'afficher</p>
+                <p>{t('projectDetail.selectPartToDisplay')}</p>
               </div>
             )}
           </div>

@@ -1,15 +1,16 @@
 import { Project, Chapter, AppSettings } from '../types';
+import { getAuthToken } from '../utils/auth';
 
 const PROJECTS_KEY = 'academiagen_projects';
 const CHAPTERS_KEY = 'academiagen_chapters';
 const SETTINGS_KEY = 'academiagen_settings';
 
-const getHeaders = (contentType = 'application/json') => {
+const getHeaders = async (contentType = 'application/json', isAdmin = false) => {
   const headers: Record<string, string> = {};
   if (contentType) {
     headers['Content-Type'] = contentType;
   }
-  const sid = localStorage.getItem('bayano_sid');
+  const sid = isAdmin ? localStorage.getItem('bayano_admin_token') : await getAuthToken();
   if (sid) {
     headers['Authorization'] = `Bearer ${sid}`;
   }
@@ -28,7 +29,7 @@ export const storageService = {
   getSettings: async (): Promise<AppSettings> => {
     try {
       const response = await fetch('/api/settings', { 
-        headers: getHeaders(),
+        headers: await getHeaders(),
         credentials: 'include' 
       });
       if (!response.ok) return DEFAULT_SETTINGS;
@@ -43,7 +44,7 @@ export const storageService = {
   saveSettings: async (settings: AppSettings): Promise<void> => {
     const response = await fetch('/api/settings', {
       method: 'POST',
-      headers: getHeaders(),
+      headers: await getHeaders('application/json', true),
       body: JSON.stringify({ settings }),
       credentials: 'include'
     });
@@ -55,7 +56,7 @@ export const storageService = {
 
   getProjects: async (): Promise<Project[]> => {
     const response = await fetch('/api/projects', { 
-      headers: getHeaders(),
+      headers: await getHeaders(),
       credentials: 'include' 
     });
     if (response.status === 401) throw new Error("Non autorisé. Veuillez vous reconnecter.");
@@ -65,7 +66,7 @@ export const storageService = {
 
   getProject: async (id: string): Promise<(Project & { chapters: Chapter[] }) | null> => {
     const response = await fetch(`/api/projects/${id}`, { 
-      headers: getHeaders(),
+      headers: await getHeaders(),
       credentials: 'include' 
     });
     if (response.status === 401) throw new Error("Non autorisé. Veuillez vous reconnecter.");
@@ -75,7 +76,7 @@ export const storageService = {
 
   getChaptersByProject: async (projectId: string): Promise<Chapter[]> => {
     const response = await fetch(`/api/projects/${projectId}/chapters`, { 
-      headers: getHeaders(),
+      headers: await getHeaders(),
       credentials: 'include' 
     });
     if (!response.ok) return [];
@@ -85,7 +86,7 @@ export const storageService = {
   saveProject: async (project: Project): Promise<void> => {
     const response = await fetch('/api/projects', {
       method: 'POST',
-      headers: getHeaders(),
+      headers: await getHeaders(),
       body: JSON.stringify(project),
       credentials: 'include'
     });
@@ -98,7 +99,7 @@ export const storageService = {
   updateProjectPlan: async (id: string, plan: any): Promise<void> => {
     const response = await fetch(`/api/projects/${id}/plan`, {
       method: 'PATCH',
-      headers: getHeaders(),
+      headers: await getHeaders(),
       body: JSON.stringify({ plan }),
       credentials: 'include'
     });
@@ -110,7 +111,7 @@ export const storageService = {
 
   getAllChapters: async (): Promise<Chapter[]> => {
     const response = await fetch('/api/chapters', { 
-      headers: getHeaders(),
+      headers: await getHeaders(),
       credentials: 'include' 
     });
     if (!response.ok) return [];
@@ -121,7 +122,7 @@ export const storageService = {
     try {
       const response = await fetch('/api/chapters', {
         method: 'POST',
-        headers: getHeaders(),
+        headers: await getHeaders(),
         body: JSON.stringify(chapter),
         credentials: 'include'
       });
@@ -141,7 +142,7 @@ export const storageService = {
   saveWordPreview: async (projectId: string, html: string): Promise<string> => {
     const response = await fetch(`/api/projects/${projectId}/docx`, {
       method: 'POST',
-      headers: getHeaders(),
+      headers: await getHeaders(),
       body: JSON.stringify({ html }),
       credentials: 'include'
     });
@@ -156,14 +157,14 @@ export const storageService = {
   deleteProject: async (id: string): Promise<void> => {
     await fetch(`/api/projects/${id}`, {
       method: 'DELETE',
-      headers: getHeaders(),
+      headers: await getHeaders(),
       credentials: 'include'
     });
   },
 
   getChatSessions: async (): Promise<any[]> => {
     const response = await fetch('/api/chat-sessions', { 
-      headers: getHeaders(),
+      headers: await getHeaders(),
       credentials: 'include' 
     });
     if (!response.ok) return [];
@@ -173,7 +174,7 @@ export const storageService = {
   saveChatSession: async (session: any): Promise<void> => {
     const response = await fetch('/api/chat-sessions', {
       method: 'POST',
-      headers: getHeaders(),
+      headers: await getHeaders(),
       body: JSON.stringify(session),
       credentials: 'include'
     });
@@ -186,7 +187,7 @@ export const storageService = {
   deleteChatSession: async (id: string): Promise<void> => {
     await fetch(`/api/chat-sessions/${id}`, {
       method: 'DELETE',
-      headers: getHeaders(),
+      headers: await getHeaders(),
       credentials: 'include'
     });
   }

@@ -24,6 +24,7 @@ export default function ProjectWizard({ user, onCancel, onComplete, onShowPricin
   const { t } = useTranslation();
   const [step, setStep] = useState(1);
   const [isParsing, setIsParsing] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
   const [formData, setFormData] = useState<Partial<Project>>({
     title: '',
@@ -48,10 +49,7 @@ export default function ProjectWizard({ user, onCancel, onComplete, onShowPricin
     aiModel: 'gemini-3-flash-preview'
   });
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  const processFile = async (file: File) => {
     setFileName(file.name);
     setIsParsing(true);
 
@@ -74,14 +72,40 @@ export default function ProjectWizard({ user, onCancel, onComplete, onShowPricin
           setFormData(prev => ({ ...prev, referenceText: text }));
         } catch (docxErr: any) {
           console.error("Docx error:", docxErr);
-          throw new Error("Erreur lors de la lecture du fichier DOCX.");
+          throw new Error(t('wizard.errors.docxRead'));
         }
       }
     } catch (error) {
       console.error("Error parsing file:", error);
-      showAlert({ message: "Erreur lors de la lecture du fichier. Assurez-vous qu'il s'agit d'un PDF ou DOCX valide.", type: 'error' });
+      showAlert({ message: t('wizard.errors.fileRead'), type: 'error' });
     } finally {
       setIsParsing(false);
+    }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await processFile(file);
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLLabelElement>) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLLabelElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent<HTMLLabelElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+    
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      await processFile(file);
     }
   };
 
@@ -118,14 +142,14 @@ export default function ProjectWizard({ user, onCancel, onComplete, onShowPricin
                 <span className={`text-[8px] md:text-[10px] uppercase tracking-[0.2em] font-bold ${
                   i === step ? 'text-academic-900' : 'text-slate-300'
                 }`}>
-                  Étape 0{i}
+                  {t('wizard.step')} 0{i}
                 </span>
               </div>
             ))}
           </div>
           <div className="flex items-center gap-1 sm:gap-2 text-slate-300">
             <Sparkles size={14} className="sm:w-4 sm:h-4" />
-            <span className="text-[8px] sm:text-[10px] uppercase tracking-[0.2em] font-bold hidden sm:inline">Conception Assistée</span>
+            <span className="text-[8px] sm:text-[10px] uppercase tracking-[0.2em] font-bold hidden sm:inline">{t('wizard.assistedDesign')}</span>
           </div>
         </div>
 
@@ -218,12 +242,17 @@ export default function ProjectWizard({ user, onCancel, onComplete, onShowPricin
                   <label className="block text-[10px] uppercase tracking-[0.2em] font-bold text-slate-400 mb-4 group-focus-within:text-accent transition-colors">{t('wizard.fields.referenceText')}</label>
                   {!fileName ? (
                     <div className="flex items-center justify-center w-full">
-                      <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-slate-100 border-dashed rounded-[24px] cursor-pointer bg-slate-50/50 hover:bg-white hover:border-accent/40 transition-all group/upload">
+                      <label 
+                        className={`flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-[24px] cursor-pointer transition-all group/upload ${isDragging ? 'bg-accent/5 border-accent' : 'border-slate-100 bg-slate-50/50 hover:bg-white hover:border-accent/40'}`}
+                        onDragOver={handleDragOver}
+                        onDragLeave={handleDragLeave}
+                        onDrop={handleDrop}
+                      >
                         <div className="flex flex-col items-center justify-center pt-5 pb-6">
                           <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center text-slate-400 mb-3 shadow-sm group-hover/upload:text-accent transition-colors">
                             <Upload size={20} />
                           </div>
-                          <p className="text-xs text-slate-500"><span className="font-bold text-academic-900">Cliquez pour uploader</span> un PDF ou DOCX</p>
+                          <p className="text-xs text-slate-500"><span className="font-bold text-academic-900">Glissez-déposez ou cliquez</span> pour uploader un PDF ou DOCX</p>
                         </div>
                         <input type="file" className="hidden" accept=".pdf,.docx" onChange={handleFileUpload} />
                       </label>

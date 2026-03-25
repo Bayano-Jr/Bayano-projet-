@@ -8,22 +8,26 @@ import GenerationView from './components/GenerationView';
 import ProjectDetail from './components/ProjectDetail';
 import AdminBackoffice from './components/AdminBackoffice';
 import Auth from './components/Auth';
-import TwoFactorSetup from './components/TwoFactorSetup';
 import ChatAssistant from './components/ChatAssistant';
 import AntiPlagiarism from './components/AntiPlagiarism';
 import PricingModal from './components/PricingModal';
+import TermsModal from './components/TermsModal';
 import { Project, PlanStructure, AppSettings, User } from './types';
 import { generatePlan } from './services/geminiService';
 import { storageService } from './services/storageService';
 import { BookOpen, Sparkles, Shield, LogOut, Settings as SettingsIcon, MessageSquare, Search } from 'lucide-react';
-import i18n from './i18n';
+import { useTranslation } from 'react-i18next';
 import { useAlert } from './contexts/AlertContext';
 
 type View = 'dashboard' | 'wizard' | 'custom_wizard' | 'plan_editor' | 'generation' | 'detail' | 'admin' | 'chat' | 'anti_plagiarism';
 
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { onIdTokenChanged, signOut } from 'firebase/auth';
+import { auth } from './firebase';
+import { getAuthToken } from './utils/auth';
 
 export default function App() {
+  const { t, i18n } = useTranslation();
   const { showAlert } = useAlert();
   const [view, setView] = useState<View>('dashboard');
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -54,9 +58,9 @@ export default function App() {
   };
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
-  const [is2FASetupOpen, setIs2FASetupOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isPricingOpen, setIsPricingOpen] = useState(false);
+  const [isTermsOpen, setIsTermsOpen] = useState(false);
   const [adminClickCount, setAdminClickCount] = useState(0);
 
   useEffect(() => {
@@ -83,8 +87,36 @@ export default function App() {
   };
 
   useEffect(() => {
-    checkAuth();
     loadSettings();
+    
+    const unsubscribe = onIdTokenChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        try {
+          const token = await firebaseUser.getIdToken();
+          const response = await fetch('/api/auth/sync', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            }
+          });
+          if (response.ok) {
+            const data = await response.json();
+            handleSetUser(data.user, token);
+          } else {
+            handleSetUser(null);
+          }
+        } catch (err) {
+          console.error("Auth sync failed:", err);
+          handleSetUser(null);
+        }
+      } else {
+        handleSetUser(null);
+      }
+      setIsAuthLoading(false);
+    });
+    
+    return () => unsubscribe();
   }, []);
 
   const loadSettings = async () => {
@@ -97,63 +129,11 @@ export default function App() {
     }
   };
 
-  const checkAuth = async () => {
-    try {
-      setIsAuthLoading(true);
-      setAuthError(null);
-      console.log("[App] Checking auth...");
-      
-      // Add a timeout to the fetch
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
-
-      const headers: Record<string, string> = {};
-      const sid = localStorage.getItem('bayano_sid');
-      if (sid) {
-        headers['Authorization'] = `Bearer ${sid}`;
-      }
-
-      const response = await fetch('/api/auth/me', { 
-        headers,
-        credentials: 'include',
-        signal: controller.signal
-      });
-      
-      clearTimeout(timeoutId);
-
-      if (response.ok) {
-        const data = await response.json();
-        console.log("[App] Auth success:", data.user.email);
-        handleSetUser(data.user, data.sessionId);
-      } else {
-        console.log("[App] Auth failed with status:", response.status);
-        // If we get a 401, clear the local user as it's definitely invalid
-        if (response.status === 401) {
-          handleSetUser(null);
-        }
-      }
-    } catch (err) {
-      console.error("Auth check failed:", err);
-      setAuthError("Impossible de se connecter au serveur.");
-    } finally {
-      setIsAuthLoading(false);
-    }
-  };
-
   const handleLogout = async () => {
     try {
-      const headers: Record<string, string> = {};
-      const sid = localStorage.getItem('bayano_sid');
-      if (sid) {
-        headers['Authorization'] = `Bearer ${sid}`;
-      }
-      await fetch('/api/auth/logout', { 
-        method: 'POST', 
-        headers,
-        credentials: 'include' 
-      });
+      await signOut(auth);
     } catch (err) {
-      console.error("Logout failed");
+      console.error("Logout failed", err);
     }
     handleSetUser(null);
     setView('dashboard');
@@ -191,7 +171,7 @@ export default function App() {
     if (!user) return;
 
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    const sid = localStorage.getItem('bayano_sid');
+    const sid = await getAuthToken();
     if (sid) {
       headers['Authorization'] = `Bearer ${sid}`;
     }
@@ -217,7 +197,7 @@ export default function App() {
       }
     } catch (err) {
       console.error("Error checking credits:", err);
-      showAlert({ message: "Erreur lors de la vérification des crédits.", type: 'error' });
+      showAlert({ message: t('app.errorCheckingCredits'), type: 'error' });
       return;
     }
 
@@ -243,7 +223,7 @@ export default function App() {
         const deductData = await deductRes.json();
         handleSetUser({ ...user, credits: deductData.remainingCredits });
       } else {
-        throw new Error("Crédits insuffisants");
+        throw new Error(t('app.insufficientCredits'));
       }
 
       // 1. Generate Plan with Gemini
@@ -252,21 +232,31 @@ export default function App() {
       
       // 2. Save Project to Storage
       const projectToSave = { ...newProject, plan: JSON.stringify(plan) };
+      
+      if (newProject.generationMode === 'direct') {
+        projectToSave.status = 'plan_validated';
+      }
+      
       await storageService.saveProject(projectToSave);
 
       setCurrentProject(projectToSave);
       setSelectedProjectId(id);
       setIsGeneratingPlan(false);
-      setView('plan_editor');
+      
+      if (newProject.generationMode === 'direct') {
+        setView('generation');
+      } else {
+        setView('plan_editor');
+      }
     } catch (error: any) {
       console.error("Error generating or saving plan:", error);
       setIsGeneratingPlan(false);
       
       if (error.message.includes("Non autorisé")) {
         handleSetUser(null);
-        showAlert({ message: "Votre session a expiré. Veuillez vous reconnecter.", type: 'warning' });
+        showAlert({ message: t('app.sessionExpired'), type: 'warning' });
       } else {
-        showAlert({ message: `Erreur lors de la création du projet: ${error.message || "Veuillez réessayer."}`, type: 'error' });
+        showAlert({ message: `${t('app.errorCreatingProject')} ${error.message || t('app.pleaseRetry')}`, type: 'error' });
       }
     }
   };
@@ -280,7 +270,7 @@ export default function App() {
       setView('generation');
     } catch (error: any) {
       console.error("Error validating plan:", error);
-      showAlert({ message: `Erreur lors de la validation du plan: ${error.message}`, type: 'error' });
+      showAlert({ message: `${t('app.errorValidatingPlan')} ${error.message}`, type: 'error' });
     }
   };
 
@@ -304,28 +294,25 @@ export default function App() {
     handleSetUser(null);
     setView('dashboard');
     // Use a ref or state to prevent multiple alerts
-    showAlert({ message: "Votre session a expiré. Veuillez vous reconnecter.", type: 'warning' });
-  }, [showAlert]);
+    showAlert({ message: t('app.sessionExpired'), type: 'warning' });
+  }, [showAlert, t]);
 
   if (isAuthLoading || !settings) {
     return (
       <div className="min-h-screen bg-academic-50 flex flex-col items-center justify-center p-10 text-center">
         <div className="w-16 h-16 border-4 border-academic-900/20 border-t-academic-900 rounded-full animate-spin mb-8"></div>
-        <h2 className="text-2xl font-serif font-bold text-academic-900 mb-2">Bayano Académie</h2>
-        <p className="text-slate-400 italic">Initialisation de votre environnement de recherche...</p>
+        <h2 className="text-2xl font-serif font-bold text-academic-900 mb-2">{settings?.appName || t('app.title')}</h2>
+        <p className="text-slate-400 italic">{t('app.initializing')}</p>
         
         {authError && (
           <div className="mt-10 p-6 bg-red-50 border border-red-100 rounded-2xl max-w-sm">
             <p className="text-red-600 text-sm font-medium mb-4">{authError}</p>
             <div className="flex flex-col gap-2">
               <button 
-                onClick={() => checkAuth()} 
+                onClick={() => window.location.reload()} 
                 className="btn-primary bg-red-600 hover:bg-red-700 py-2 text-xs"
               >
-                Réessayer la connexion
-              </button>
-              <button onClick={() => window.location.reload()} className="text-[10px] font-bold uppercase tracking-widest text-red-700 hover:underline">
-                Rafraîchir la page
+                {t('app.retryLogin')}
               </button>
             </div>
           </div>
@@ -335,7 +322,29 @@ export default function App() {
   }
 
   if (!user) {
-    return <Auth onLogin={(u, sid) => handleSetUser(u, sid)} />;
+    return (
+      <>
+        <Auth 
+          onLogin={(u, sid) => handleSetUser(u, sid)} 
+          onShowTerms={() => setIsTermsOpen(true)}
+        />
+        <TermsModal 
+          isOpen={isTermsOpen}
+          onClose={() => setIsTermsOpen(false)}
+        />
+      </>
+    );
+  }
+
+  if (!settings) {
+    return (
+      <div className="min-h-screen bg-academic-100 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-academic-200 border-t-academic-900 rounded-full animate-spin"></div>
+          <p className="text-academic-900 font-medium">{t('app.loading')}</p>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -358,26 +367,26 @@ export default function App() {
         
         <div className="flex items-center gap-2 md:gap-6 ml-auto">
           <button 
-            title="Assistant IA"
+            title={t('dashboard.aiAssistantTitle')}
             onClick={() => setView('chat')}
             className={`flex items-center gap-2 px-3 md:px-4 py-2 rounded-xl font-bold text-xs md:text-sm transition-all duration-300 ${view === 'chat' ? 'bg-accent text-white shadow-lg shadow-accent/20 scale-105' : 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 hover:scale-105 shadow-sm'}`}
           >
             <MessageSquare size={16} className={view !== 'chat' ? 'text-emerald-600' : ''} />
-            <span className="hidden lg:inline">Assistant IA</span>
+            <span className="hidden lg:inline">{t('dashboard.aiAssistantTitle')}</span>
           </button>
 
           <button 
-            title="Anti-Plagiat"
+            title={t('dashboard.antiPlagiarismTitle')}
             onClick={() => setView('anti_plagiarism')}
             className={`flex items-center gap-2 px-3 md:px-4 py-2 rounded-xl font-bold text-xs md:text-sm transition-all duration-300 ${view === 'anti_plagiarism' ? 'bg-academic-900 text-white shadow-lg shadow-academic-900/20 scale-105' : 'bg-slate-50 text-slate-700 border border-slate-200 hover:bg-slate-100 hover:scale-105 shadow-sm'}`}
           >
             <Search size={16} className={view !== 'anti_plagiarism' ? 'text-slate-600' : ''} />
-            <span className="hidden lg:inline">Anti-Plagiat</span>
+            <span className="hidden lg:inline">{t('dashboard.antiPlagiarismTitle')}</span>
           </button>
           
           <div className="hidden xl:flex items-center gap-3 text-xs font-bold uppercase tracking-widest text-slate-400">
             <Sparkles size={14} className="text-accent animate-pulse" />
-            Propulsé par {settings.aiModel.includes('pro') ? 'Gemini Pro' : 'Gemini Flash'}
+            {t('app.poweredBy')} {settings.aiModel.includes('pro') ? 'Gemini Pro' : 'Gemini Flash'}
           </div>
 
           <button 
@@ -385,7 +394,7 @@ export default function App() {
             className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-full transition-colors border border-slate-200"
           >
             <div className={`w-2 h-2 rounded-full ${user.plan === 'premium' ? 'bg-yellow-400' : user.plan === 'student' ? 'bg-accent' : 'bg-slate-400'}`}></div>
-            <span className="text-xs font-bold text-slate-700">{user.credits || 0} crédits</span>
+            <span className="text-xs font-bold text-slate-700">{user.credits || 0} {t('app.credits')}</span>
           </button>
           
           <div className="flex items-center gap-2 border-l border-slate-100 pl-2 md:pl-6">
@@ -414,7 +423,7 @@ export default function App() {
             >
               <div className="hidden md:flex flex-col items-end">
                 <span className="text-sm font-bold text-academic-900 group-hover:text-accent transition-colors max-w-[100px] lg:max-w-[150px] truncate">{user.name}</span>
-                <span className="text-[10px] text-slate-400 uppercase tracking-widest">{user.plan === 'premium' ? 'Premium' : user.plan === 'student' ? 'Étudiant Plus' : 'Gratuit'}</span>
+                <span className="text-[10px] text-slate-400 uppercase tracking-widest">{user.plan === 'premium' ? t('app.plans.premium') : user.plan === 'student' ? t('app.plans.student') : t('app.plans.free')}</span>
               </div>
               <div className="w-10 h-10 md:w-12 md:h-12 rounded-2xl bg-academic-900 text-white flex items-center justify-center font-serif text-lg shadow-xl shadow-academic-900/10 border border-white/10 group-hover:scale-105 transition-transform shrink-0">
                 {user.name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2)}
@@ -441,7 +450,7 @@ export default function App() {
                     className="absolute right-0 mt-4 w-64 bg-white rounded-3xl shadow-2xl border border-slate-100 py-4 z-50 overflow-hidden"
                   >
                     <div className="px-6 py-4 border-b border-slate-50 mb-2">
-                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Connecté en tant que</p>
+                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">{t('app.loggedInAs')}</p>
                       <p className="text-sm font-bold text-academic-900 truncate">{user.email}</p>
                     </div>
 
@@ -453,19 +462,9 @@ export default function App() {
                       className="w-full px-6 py-3 text-left text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-academic-900 flex items-center gap-3 transition-colors"
                     >
                       <Sparkles size={18} className="text-accent" />
-                      Gérer l'abonnement
+                      {t('app.manageSubscription')}
                     </button>
                     
-                    <button 
-                      onClick={() => {
-                        setIs2FASetupOpen(true);
-                        setIsUserMenuOpen(false);
-                      }}
-                      className="w-full px-6 py-3 text-left text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-academic-900 flex items-center gap-3 transition-colors"
-                    >
-                      <SettingsIcon size={18} className="text-slate-400" />
-                      Sécurité & 2FA
-                    </button>
 
                     <div className="h-px bg-slate-50 my-2"></div>
 
@@ -474,7 +473,7 @@ export default function App() {
                       className="w-full px-6 py-3 text-left text-sm font-bold text-red-500 hover:bg-red-50 flex items-center gap-3 transition-colors"
                     >
                       <LogOut size={18} />
-                      Déconnexion
+                      {t('app.logout')}
                     </button>
                   </motion.div>
                 </motion.div>
@@ -484,14 +483,6 @@ export default function App() {
         </div>
       </nav>
 
-      {is2FASetupOpen && (
-        <TwoFactorSetup 
-          user={user} 
-          onUpdate={(u) => handleSetUser(u)} 
-          onClose={() => setIs2FASetupOpen(false)} 
-        />
-      )}
-
       {isPricingOpen && (
         <PricingModal 
           user={user}
@@ -500,6 +491,11 @@ export default function App() {
         />
       )}
 
+      <TermsModal 
+        isOpen={isTermsOpen}
+        onClose={() => setIsTermsOpen(false)}
+      />
+
       <main className={`flex-1 flex flex-col ${view === 'chat' ? 'h-[calc(100vh-80px)] overflow-hidden' : 'py-4 md:py-8'}`}>
         {isGeneratingPlan ? (
           <div className="flex flex-col items-center justify-center p-20 text-center">
@@ -507,9 +503,9 @@ export default function App() {
               <div className="w-24 h-24 border-4 border-accent/20 border-t-accent rounded-full animate-spin"></div>
               <Sparkles className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-accent" size={32} />
             </div>
-            <h2 className="text-3xl mb-4">Analyse de votre sujet...</h2>
+            <h2 className="text-3xl mb-4">{t('app.analyzingSubject')}</h2>
             <p className="text-gray-500 max-w-md">
-              Notre intelligence artificielle structure votre mémoire en respectant les normes académiques internationales.
+              {t('app.structuringThesis')}
             </p>
           </div>
         ) : (
@@ -614,8 +610,7 @@ export default function App() {
               <span className="font-serif font-bold text-lg">{settings.appName}</span>
             </div>
             <div className="flex items-center gap-8 text-[10px] uppercase tracking-[0.2em] font-bold text-slate-400">
-              <a href="#" className="hover:text-academic-900 transition-colors">Confidentialité</a>
-              <a href="#" className="hover:text-academic-900 transition-colors">Conditions</a>
+              <button onClick={() => setIsTermsOpen(true)} className="hover:text-academic-900 transition-colors uppercase">Conditions</button>
             </div>
             <div 
               className="text-[10px] uppercase tracking-[0.2em] font-bold text-slate-300 cursor-default select-none"

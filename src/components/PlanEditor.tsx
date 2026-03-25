@@ -6,6 +6,8 @@ import { refinePlan } from '../services/geminiService';
 import { useTranslation } from 'react-i18next';
 import { useAlert } from '../contexts/AlertContext';
 
+import { getAuthToken } from '../utils/auth';
+
 interface PlanEditorProps {
   project: Project;
   plan: PlanStructure;
@@ -71,96 +73,158 @@ export default function PlanEditor({ project, plan: initialPlan, onValidate, onA
   };
 
   const updateChapterTitle = (cIdx: number, title: string) => {
-    const newPlan = { ...plan };
-    if (cIdx === -1) {
-      newPlan.introduction.titre = title;
-    } else {
-      newPlan.chapitres[cIdx].titre = title;
-    }
-    setPlan(newPlan);
+    setPlan(prev => {
+      const newPlan = { ...prev };
+      if (cIdx === -1) {
+        newPlan.introduction = { ...newPlan.introduction, titre: title };
+      } else {
+        newPlan.chapitres = [...newPlan.chapitres];
+        newPlan.chapitres[cIdx] = { ...newPlan.chapitres[cIdx], titre: title };
+      }
+      return newPlan;
+    });
     setEditingId(null);
   };
 
   const addChapter = () => {
-    const newPlan = { ...plan };
-    newPlan.chapitres.push({
-      titre: t('planEditor.newPart'),
-      sections: [{ titre: t('planEditor.newSection'), sous_sections: [t('planEditor.newSubSection')] }]
-    });
-    setPlan(newPlan);
+    setPlan(prev => ({
+      ...prev,
+      chapitres: [
+        ...prev.chapitres,
+        {
+          titre: t('planEditor.newPart'),
+          sections: [{ titre: t('planEditor.newSection'), sous_sections: [t('planEditor.newSubSection')] }]
+        }
+      ]
+    }));
   };
 
   const removeChapter = (cIdx: number) => {
-    const newPlan = { ...plan };
-    newPlan.chapitres.splice(cIdx, 1);
-    setPlan(newPlan);
+    setPlan(prev => ({
+      ...prev,
+      chapitres: prev.chapitres.filter((_, i) => i !== cIdx)
+    }));
   };
 
   const addSection = (cIdx: number) => {
-    const newPlan = { ...plan };
-    if (cIdx === -1) {
-      newPlan.introduction.sections.push({
-        titre: t('planEditor.newSection'),
-        sous_sections: [t('planEditor.newSubSection')]
-      });
-    } else {
-      newPlan.chapitres[cIdx].sections.push({
-        titre: t('planEditor.newSection'),
-        sous_sections: [t('planEditor.newSubSection')]
-      });
-    }
-    setPlan(newPlan);
+    setPlan(prev => {
+      const newPlan = { ...prev };
+      if (cIdx === -1) {
+        newPlan.introduction = {
+          ...newPlan.introduction,
+          sections: [
+            ...newPlan.introduction.sections,
+            { titre: t('planEditor.newSection'), sous_sections: [t('planEditor.newSubSection')] }
+          ]
+        };
+      } else {
+        newPlan.chapitres = [...newPlan.chapitres];
+        newPlan.chapitres[cIdx] = {
+          ...newPlan.chapitres[cIdx],
+          sections: [
+            ...newPlan.chapitres[cIdx].sections,
+            { titre: t('planEditor.newSection'), sous_sections: [t('planEditor.newSubSection')] }
+          ]
+        };
+      }
+      return newPlan;
+    });
   };
 
   const removeSection = (cIdx: number, sIdx: number) => {
-    const newPlan = { ...plan };
-    if (cIdx === -1) {
-      newPlan.introduction.sections.splice(sIdx, 1);
-    } else {
-      newPlan.chapitres[cIdx].sections.splice(sIdx, 1);
-    }
-    setPlan(newPlan);
+    setPlan(prev => {
+      const newPlan = { ...prev };
+      if (cIdx === -1) {
+        newPlan.introduction = {
+          ...newPlan.introduction,
+          sections: newPlan.introduction.sections.filter((_, i) => i !== sIdx)
+        };
+      } else {
+        newPlan.chapitres = [...newPlan.chapitres];
+        newPlan.chapitres[cIdx] = {
+          ...newPlan.chapitres[cIdx],
+          sections: newPlan.chapitres[cIdx].sections.filter((_, i) => i !== sIdx)
+        };
+      }
+      return newPlan;
+    });
   };
 
   const updateSectionTitle = (cIdx: number, sIdx: number, title: string) => {
-    const newPlan = { ...plan };
-    if (cIdx === -1) {
-      newPlan.introduction.sections[sIdx].titre = title;
-    } else {
-      newPlan.chapitres[cIdx].sections[sIdx].titre = title;
-    }
-    setPlan(newPlan);
+    setPlan(prev => {
+      const newPlan = { ...prev };
+      if (cIdx === -1) {
+        newPlan.introduction = { ...newPlan.introduction };
+        newPlan.introduction.sections = [...newPlan.introduction.sections];
+        newPlan.introduction.sections[sIdx] = { ...newPlan.introduction.sections[sIdx], titre: title };
+      } else {
+        newPlan.chapitres = [...newPlan.chapitres];
+        newPlan.chapitres[cIdx] = { ...newPlan.chapitres[cIdx] };
+        newPlan.chapitres[cIdx].sections = [...newPlan.chapitres[cIdx].sections];
+        newPlan.chapitres[cIdx].sections[sIdx] = { ...newPlan.chapitres[cIdx].sections[sIdx], titre: title };
+      }
+      return newPlan;
+    });
     setEditingId(null);
   };
 
   const addSubSection = (cIdx: number, sIdx: number) => {
-    const newPlan = { ...plan };
-    if (cIdx === -1) {
-      newPlan.introduction.sections[sIdx].sous_sections.push(t('planEditor.newSubSection'));
-    } else {
-      newPlan.chapitres[cIdx].sections[sIdx].sous_sections.push(t('planEditor.newSubSection'));
-    }
-    setPlan(newPlan);
+    setPlan(prev => {
+      const newPlan = { ...prev };
+      if (cIdx === -1) {
+        newPlan.introduction = { ...newPlan.introduction };
+        newPlan.introduction.sections = [...newPlan.introduction.sections];
+        newPlan.introduction.sections[sIdx] = { ...newPlan.introduction.sections[sIdx] };
+        newPlan.introduction.sections[sIdx].sous_sections = [...newPlan.introduction.sections[sIdx].sous_sections, t('planEditor.newSubSection')];
+      } else {
+        newPlan.chapitres = [...newPlan.chapitres];
+        newPlan.chapitres[cIdx] = { ...newPlan.chapitres[cIdx] };
+        newPlan.chapitres[cIdx].sections = [...newPlan.chapitres[cIdx].sections];
+        newPlan.chapitres[cIdx].sections[sIdx] = { ...newPlan.chapitres[cIdx].sections[sIdx] };
+        newPlan.chapitres[cIdx].sections[sIdx].sous_sections = [...newPlan.chapitres[cIdx].sections[sIdx].sous_sections, t('planEditor.newSubSection')];
+      }
+      return newPlan;
+    });
   };
 
   const removeSubSection = (cIdx: number, sIdx: number, subIdx: number) => {
-    const newPlan = { ...plan };
-    if (cIdx === -1) {
-      newPlan.introduction.sections[sIdx].sous_sections.splice(subIdx, 1);
-    } else {
-      newPlan.chapitres[cIdx].sections[sIdx].sous_sections.splice(subIdx, 1);
-    }
-    setPlan(newPlan);
+    setPlan(prev => {
+      const newPlan = { ...prev };
+      if (cIdx === -1) {
+        newPlan.introduction = { ...newPlan.introduction };
+        newPlan.introduction.sections = [...newPlan.introduction.sections];
+        newPlan.introduction.sections[sIdx] = { ...newPlan.introduction.sections[sIdx] };
+        newPlan.introduction.sections[sIdx].sous_sections = newPlan.introduction.sections[sIdx].sous_sections.filter((_, i) => i !== subIdx);
+      } else {
+        newPlan.chapitres = [...newPlan.chapitres];
+        newPlan.chapitres[cIdx] = { ...newPlan.chapitres[cIdx] };
+        newPlan.chapitres[cIdx].sections = [...newPlan.chapitres[cIdx].sections];
+        newPlan.chapitres[cIdx].sections[sIdx] = { ...newPlan.chapitres[cIdx].sections[sIdx] };
+        newPlan.chapitres[cIdx].sections[sIdx].sous_sections = newPlan.chapitres[cIdx].sections[sIdx].sous_sections.filter((_, i) => i !== subIdx);
+      }
+      return newPlan;
+    });
   };
 
   const updateSubSection = (cIdx: number, sIdx: number, subIdx: number, value: string) => {
-    const newPlan = { ...plan };
-    if (cIdx === -1) {
-      newPlan.introduction.sections[sIdx].sous_sections[subIdx] = value;
-    } else {
-      newPlan.chapitres[cIdx].sections[sIdx].sous_sections[subIdx] = value;
-    }
-    setPlan(newPlan);
+    setPlan(prev => {
+      const newPlan = { ...prev };
+      if (cIdx === -1) {
+        newPlan.introduction = { ...newPlan.introduction };
+        newPlan.introduction.sections = [...newPlan.introduction.sections];
+        newPlan.introduction.sections[sIdx] = { ...newPlan.introduction.sections[sIdx] };
+        newPlan.introduction.sections[sIdx].sous_sections = [...newPlan.introduction.sections[sIdx].sous_sections];
+        newPlan.introduction.sections[sIdx].sous_sections[subIdx] = value;
+      } else {
+        newPlan.chapitres = [...newPlan.chapitres];
+        newPlan.chapitres[cIdx] = { ...newPlan.chapitres[cIdx] };
+        newPlan.chapitres[cIdx].sections = [...newPlan.chapitres[cIdx].sections];
+        newPlan.chapitres[cIdx].sections[sIdx] = { ...newPlan.chapitres[cIdx].sections[sIdx] };
+        newPlan.chapitres[cIdx].sections[sIdx].sous_sections = [...newPlan.chapitres[cIdx].sections[sIdx].sous_sections];
+        newPlan.chapitres[cIdx].sections[sIdx].sous_sections[subIdx] = value;
+      }
+      return newPlan;
+    });
     setEditingId(null);
   };
 
@@ -182,14 +246,14 @@ export default function PlanEditor({ project, plan: initialPlan, onValidate, onA
     try {
       // Deduct credits
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      const sid = localStorage.getItem('bayano_sid');
+      const sid = await getAuthToken();
       if (sid) {
         headers['Authorization'] = `Bearer ${sid}`;
       }
       const deductRes = await fetch('/api/saas/deduct', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ amount: 1, description: `Modification plan IA: ${project.title.substring(0, 20)}...` }),
+        body: JSON.stringify({ amount: 1, description: `${t('planEditor.aiPlanModification')}: ${project.title.substring(0, 20)}...` }),
         credentials: 'include'
       });
       
@@ -197,8 +261,8 @@ export default function PlanEditor({ project, plan: initialPlan, onValidate, onA
         const deductData = await deductRes.json();
         onUpdateUser({ ...user, credits: deductData.remainingCredits });
       } else {
-        console.error("Erreur de déduction de crédits");
-        showAlert({ message: "Erreur de déduction de crédits", type: 'error' });
+        console.error("Credit deduction error");
+        showAlert({ message: t('planEditor.creditDeductionError'), type: 'error' });
         setIsRefiningLoading(false);
         return;
       }
@@ -230,7 +294,7 @@ export default function PlanEditor({ project, plan: initialPlan, onValidate, onA
                 className="ml-4 flex items-center gap-1.5 text-slate-400 normal-case tracking-normal"
               >
                 <Loader2 size={12} className="animate-spin" />
-                Sauvegarde auto...
+                {t('planEditor.autoSaving')}
               </motion.span>
             )}
           </div>
@@ -510,7 +574,7 @@ export default function PlanEditor({ project, plan: initialPlan, onValidate, onA
                 value={editValue} 
                 onChange={e => setEditValue(e.target.value)}
               />
-              <button onClick={() => { setPlan({...plan, conclusion_generale: editValue}); setEditingId(null); }} className="w-full sm:w-12 md:w-14 h-12 md:h-14 bg-accent text-white rounded-xl md:rounded-2xl flex items-center justify-center shadow-xl shadow-accent/20 shrink-0"><Save size={20} className="md:w-6 md:h-6"/></button>
+              <button onClick={() => { setPlan(prev => ({...prev, conclusion_generale: editValue})); setEditingId(null); }} className="w-full sm:w-12 md:w-14 h-12 md:h-14 bg-accent text-white rounded-xl md:rounded-2xl flex items-center justify-center shadow-xl shadow-accent/20 shrink-0"><Save size={20} className="md:w-6 md:h-6"/></button>
             </div>
           ) : (
             <p className="text-white/70 text-base md:text-lg leading-relaxed font-serif italic relative z-10">{plan.conclusion_generale || t('planEditor.noConclusion')}</p>
@@ -533,17 +597,17 @@ export default function PlanEditor({ project, plan: initialPlan, onValidate, onA
                     className="academic-input py-1.5 md:py-2 px-3 md:px-4 text-[10px] md:text-xs flex-1 mr-2 md:mr-4" 
                     value={editValue} 
                     onChange={e => setEditValue(e.target.value)}
-                    onBlur={() => { const b = [...plan.bibliographie_indicative]; b[i] = editValue; setPlan({...plan, bibliographie_indicative: b}); setEditingId(null); }}
+                    onBlur={() => { setPlan(prev => { const b = [...prev.bibliographie_indicative]; b[i] = editValue; return {...prev, bibliographie_indicative: b}; }); setEditingId(null); }}
                     autoFocus
                   />
                 ) : (
                   <span onClick={() => startEditing(`bib-${i}`, item)} className="cursor-pointer hover:text-accent flex-1 break-words mr-2">{item}</span>
                 )}
-                <button onClick={() => { const b = [...plan.bibliographie_indicative]; b.splice(i, 1); setPlan({...plan, bibliographie_indicative: b}); }} className="opacity-100 lg:opacity-0 lg:group-hover:opacity-100 text-slate-300 hover:text-red-500 transition-all shrink-0 p-1"><Trash2 size={14} className="md:w-4 md:h-4"/></button>
+                <button onClick={() => { setPlan(prev => { const b = [...prev.bibliographie_indicative]; b.splice(i, 1); return {...prev, bibliographie_indicative: b}; }); }} className="opacity-100 lg:opacity-0 lg:group-hover:opacity-100 text-slate-300 hover:text-red-500 transition-all shrink-0 p-1"><Trash2 size={14} className="md:w-4 md:h-4"/></button>
               </li>
             ))}
             <button 
-              onClick={() => setPlan({...plan, bibliographie_indicative: [...plan.bibliographie_indicative, t('planEditor.newReference')]})}
+              onClick={() => setPlan(prev => ({...prev, bibliographie_indicative: [...(prev.bibliographie_indicative || []), t('planEditor.newReference')]}))}
               className="text-[10px] text-accent font-bold uppercase tracking-widest flex items-center gap-2 mt-6 md:mt-8 hover:bg-accent/5 px-4 md:px-6 py-2 md:py-3 rounded-xl md:rounded-2xl transition-all border border-accent/10 w-fit"
             >
               <Plus size={12} className="md:w-3.5 md:h-3.5" /> {t('planEditor.addReference')}
@@ -567,17 +631,17 @@ export default function PlanEditor({ project, plan: initialPlan, onValidate, onA
                     className="academic-input py-1.5 md:py-2 px-3 md:px-4 text-[10px] md:text-xs flex-1 mr-2 md:mr-4" 
                     value={editValue} 
                     onChange={e => setEditValue(e.target.value)}
-                    onBlur={() => { const a = [...(plan.annexes || [])]; a[i] = editValue; setPlan({...plan, annexes: a}); setEditingId(null); }}
+                    onBlur={() => { setPlan(prev => { const a = [...(prev.annexes || [])]; a[i] = editValue; return {...prev, annexes: a}; }); setEditingId(null); }}
                     autoFocus
                   />
                 ) : (
                   <span onClick={() => startEditing(`annex-${i}`, item)} className="cursor-pointer hover:text-accent flex-1 break-words mr-2">{item}</span>
                 )}
-                <button onClick={() => { const a = [...(plan.annexes || [])]; a.splice(i, 1); setPlan({...plan, annexes: a}); }} className="opacity-100 lg:opacity-0 lg:group-hover:opacity-100 text-slate-300 hover:text-red-500 transition-all shrink-0 p-1"><Trash2 size={14} className="md:w-4 md:h-4"/></button>
+                <button onClick={() => { setPlan(prev => { const a = [...(prev.annexes || [])]; a.splice(i, 1); return {...prev, annexes: a}; }); }} className="opacity-100 lg:opacity-0 lg:group-hover:opacity-100 text-slate-300 hover:text-red-500 transition-all shrink-0 p-1"><Trash2 size={14} className="md:w-4 md:h-4"/></button>
               </li>
             ))}
             <button 
-              onClick={() => setPlan({...plan, annexes: [...(plan.annexes || []), t('planEditor.newAnnex')]})}
+              onClick={() => setPlan(prev => ({...prev, annexes: [...(prev.annexes || []), t('planEditor.newAnnex')]}))}
               className="text-[10px] text-accent font-bold uppercase tracking-widest flex items-center gap-2 mt-6 md:mt-8 hover:bg-accent/5 px-4 md:px-6 py-2 md:py-3 rounded-xl md:rounded-2xl transition-all border border-accent/10 w-fit"
             >
               <Plus size={12} className="md:w-3.5 md:h-3.5" /> {t('planEditor.addAnnex')}

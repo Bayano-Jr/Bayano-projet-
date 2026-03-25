@@ -1,89 +1,104 @@
 import express from "express";
-import session from "express-session";
-import pgSession from "connect-pg-simple";
 import bcrypt from "bcryptjs";
 import { Pool } from "pg";
 import cors from "cors";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
-import speakeasy from "speakeasy";
-import QRCode from "qrcode";
 import HTMLtoDOCX from 'html-to-docx';
 import crypto from 'crypto';
+import admin from 'firebase-admin';
+import jwt from 'jsonwebtoken';
+import Database from 'better-sqlite3';
+import rateLimit from 'express-rate-limit';
 
-declare module "express-session" {
-  interface SessionData {
-    userId: string;
-    tempUserId: string;
-    isAdmin?: boolean;
-  }
-}
+admin.initializeApp({
+  projectId: process.env.FIREBASE_PROJECT_ID || 'gen-lang-client-0928535629'
+});
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-if (!process.env.DATABASE_URL) {
-  console.error("DATABASE_URL environment variable is required for PostgreSQL.");
-  process.exit(1);
+let pool: any;
+let db: any;
+
+if (process.env.DATABASE_URL) {
+  console.log("Using PostgreSQL database");
+  pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
+  });
+
+  pool.on('error', (err: any, client: any) => {
+    console.error('Unexpected error on idle client', err);
+  });
+
+  db = {
+    query: async (sql: string, params: any[] = []) => {
+      let i = 1;
+      const pgSql = sql.replace(/\?/g, () => `$${i++}`);
+      return pool.query(pgSql, params);
+    },
+    get: async (sql: string, ...params: any[]) => {
+      let i = 1;
+      const pgSql = sql.replace(/\?/g, () => `$${i++}`);
+      const res = await pool.query(pgSql, params);
+      return res.rows[0];
+    },
+    all: async (sql: string, ...params: any[]) => {
+      let i = 1;
+      const pgSql = sql.replace(/\?/g, () => `$${i++}`);
+      const res = await pool.query(pgSql, params);
+      return res.rows;
+    },
+    run: async (sql: string, ...params: any[]) => {
+      let i = 1;
+      const pgSql = sql.replace(/\?/g, () => `$${i++}`);
+      await pool.query(pgSql, params);
+    },
+    exec: async (sql: string) => {
+      await pool.query(sql);
+    },
+    prepare: (sql: string) => {
+      return {
+        run: (...params: any[]) => {
+          (async () => {
+            try {
+              let i = 1;
+              const pgSql = sql.replace(/\?/g, () => `$${i++}`);
+              await pool.query(pgSql, params);
+            } catch (err) {
+              console.error("Async db.prepare run error:", err);
+            }
+          })();
+        }
+      };
+    }
+  };
+} else {
+  console.log("Using SQLite database (fallback)");
+  const dbPath = process.env.NODE_ENV === 'production' ? '/tmp/database.sqlite' : 'database.sqlite';
+  const sqliteDb = new Database(dbPath);
+  sqliteDb.pragma('journal_mode = WAL');
+  
+  db = {
+    query: async (sql: string, params: any[] = []) => sqliteDb.prepare(sql).all(params),
+    get: async (sql: string, ...params: any[]) => sqliteDb.prepare(sql).get(...params),
+    all: async (sql: string, ...params: any[]) => sqliteDb.prepare(sql).all(...params),
+    run: async (sql: string, ...params: any[]) => sqliteDb.prepare(sql).run(...params),
+    exec: async (sql: string) => sqliteDb.exec(sql),
+    prepare: (sql: string) => {
+      const stmt = sqliteDb.prepare(sql);
+      return {
+        run: (...params: any[]) => stmt.run(...params)
+      };
+    }
+  };
 }
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
-});
-
-pool.on('error', (err, client) => {
-  console.error('Unexpected error on idle client', err);
-});
-
-const db = {
-  query: async (sql: string, params: any[] = []) => {
-    let i = 1;
-    const pgSql = sql.replace(/\?/g, () => `$${i++}`);
-    return pool.query(pgSql, params);
-  },
-  get: async (sql: string, ...params: any[]) => {
-    let i = 1;
-    const pgSql = sql.replace(/\?/g, () => `$${i++}`);
-    const res = await pool.query(pgSql, params);
-    return res.rows[0];
-  },
-  all: async (sql: string, ...params: any[]) => {
-    let i = 1;
-    const pgSql = sql.replace(/\?/g, () => `$${i++}`);
-    const res = await pool.query(pgSql, params);
-    return res.rows;
-  },
-  run: async (sql: string, ...params: any[]) => {
-    let i = 1;
-    const pgSql = sql.replace(/\?/g, () => `$${i++}`);
-    await pool.query(pgSql, params);
-  },
-  exec: async (sql: string) => {
-    await pool.query(sql);
-  },
-  prepare: (sql: string) => {
-    return {
-      run: (...params: any[]) => {
-        (async () => {
-          try {
-            let i = 1;
-            const pgSql = sql.replace(/\?/g, () => `$${i++}`);
-            await pool.query(pgSql, params);
-          } catch (err) {
-            console.error("Async db.prepare run error:", err);
-          }
-        })();
-      }
-    };
-  }
-};
 
 // Initialize database
 (async () => {
   try {
-    console.log("Using PostgreSQL database");
     await db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
@@ -91,6 +106,7 @@ const db = {
     password TEXT,
     name TEXT,
     google_id TEXT UNIQUE,
+    firebase_uid TEXT UNIQUE,
     two_factor_secret TEXT,
     two_factor_enabled SMALLINT DEFAULT 0,
     plan TEXT DEFAULT 'free',
@@ -181,6 +197,7 @@ const db = {
 `);
 
 // Migrations
+try { await db.run("ALTER TABLE users ADD COLUMN firebase_uid TEXT UNIQUE"); } catch (e) {}
 try { await db.run("ALTER TABLE projects ADD COLUMN docx_data TEXT"); } catch (e) {}
 try { await db.run("ALTER TABLE users ADD COLUMN plan TEXT DEFAULT 'free'"); } catch (e) {}
 try { await db.run("ALTER TABLE users ADD COLUMN credits INTEGER DEFAULT 30"); } catch (e) {}
@@ -209,9 +226,9 @@ for (const col of missingColumns) {
 
 async function startServer() {
   const app = express();
-  const PORT = Number(process.env.PORT) || 8080;
+  const PORT = 3000;
 
-  app.set("trust proxy", true);
+  app.set("trust proxy", 1);
 
   app.use(cors({
     origin: (origin, callback) => {
@@ -246,87 +263,8 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  app.get("/api/config", (req, res) => {
-    res.json({
-      geminiApiKey: process.env.GEMINI_API_KEY || "",
-    });
-  });
-
-  let sessionStore;
-  const PgStore = pgSession(session);
-  sessionStore = new PgStore({
-    pool: pool,
-    tableName: 'session',
-    createTableIfMissing: true
-  });
-
-  // @ts-ignore
-  sessionStore.on?.('error', function(err: any) {
-    console.error('Session store error:', err);
-  });
-
-
-  const isProd = process.env.NODE_ENV === 'production' || !!process.env.APP_URL;
-
-  app.use(session({
-    name: 'bayano_sid_v4',
-    store: sessionStore,
-    secret: process.env.SESSION_SECRET || "bayano-secret-v4-final",
-    resave: false,
-    saveUninitialized: false,
-    rolling: false,
-    proxy: true,
-    cookie: {
-      secure: true,
-      sameSite: 'none',
-      httpOnly: true,
-      maxAge: 1000 * 60 * 60 * 24 * 30 // 30 days
-    }
-  }));
-
-  // Session Recovery Middleware (Fallback for blocked cookies in iframes)
-  app.use(async (req: any, res: any, next) => {
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      const sid = authHeader.split(' ')[1];
-      console.log(`[SessionRecovery] Received Bearer token: ${sid}. Current req.session.userId: ${req.session?.userId}`);
-      if (!req.session || !req.session.userId) {
-        if (sid && sid !== 'null' && sid !== 'undefined') {
-          sessionStore.get(sid, (err, sessionData) => {
-            if (err) {
-              console.error(`[SessionRecovery] Error getting session ${sid}:`, err);
-            } else if (!sessionData) {
-              console.warn(`[SessionRecovery] Session ${sid} not found in store.`);
-            } else {
-              // Manually attach session data if found
-              req.sessionID = sid;
-              // Use createSession to properly instantiate Session and Cookie objects
-              if (req.sessionStore && req.sessionStore.createSession) {
-                req.sessionStore.createSession(req, sessionData);
-              } else {
-                if (req.session) {
-                  Object.assign(req.session, sessionData);
-                } else {
-                  req.session = sessionData;
-                }
-              }
-              console.log(`[SessionRecovery] Successfully recovered session ${sid} for user ${req.session?.userId || 'admin'}`);
-            }
-            next();
-          });
-          return;
-        }
-      }
-    }
-    next();
-  });
-
-  app.use((req, res, next) => {
-    next();
-  });
-
   // Auth Middleware
-  const requireAuth = (req: any, res: any, next: any) => {
+  const requireAuth = async (req: any, res: any, next: any) => {
     // Enforce CSRF check on state-changing requests using Origin/Referer
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
       const origin = req.headers.origin || req.headers.referer;
@@ -358,14 +296,53 @@ async function startServer() {
       }
     }
 
-    if (!req.session || !req.session.userId) {
-      console.warn(`[AuthCheck] Unauthorized access attempt to ${req.path}. SessionID: ${req.sessionID}, userId: ${req.session?.userId}`);
-      return res.status(401).json({ error: "Non autorisé. Veuillez vous reconnecter." });
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: "Non autorisé. Jeton manquant." });
     }
-    next();
+    const token = authHeader.split('Bearer ')[1];
+    try {
+      const decodedToken = await admin.auth().verifyIdToken(token);
+      
+      let user: any = await db.get("SELECT * FROM users WHERE firebase_uid = ?", decodedToken.uid);
+      
+      if (!user) {
+        user = await db.get("SELECT * FROM users WHERE email = ?", decodedToken.email);
+        
+        if (user) {
+          await db.run("UPDATE users SET firebase_uid = ? WHERE id = ?", decodedToken.uid, user.id);
+        } else {
+          const newId = crypto.randomUUID();
+          try {
+            await db.run(
+              "INSERT INTO users (id, email, name, firebase_uid, plan, credits) VALUES (?, ?, ?, ?, 'free', 30)",
+              newId, decodedToken.email, decodedToken.name || decodedToken.email?.split('@')[0], decodedToken.uid
+            );
+            user = await db.get("SELECT * FROM users WHERE id = ?", newId);
+          } catch (insertError: any) {
+            // Handle concurrent insert race condition (e.g. duplicate key value violates unique constraint)
+            user = await db.get("SELECT * FROM users WHERE firebase_uid = ?", decodedToken.uid);
+            if (!user) {
+              user = await db.get("SELECT * FROM users WHERE email = ?", decodedToken.email);
+              if (user) {
+                await db.run("UPDATE users SET firebase_uid = ? WHERE id = ?", decodedToken.uid, user.id);
+              } else {
+                throw insertError;
+              }
+            }
+          }
+        }
+      }
+      req.user = user;
+      req.session = { userId: user.id }; // Mock session for compatibility
+      next();
+    } catch (error) {
+      console.error("Firebase auth error:", error);
+      return res.status(401).json({ error: "Non autorisé. Jeton invalide." });
+    }
   };
 
-  const requireAdmin = (req: any, res: any, next: any) => {
+  const requireAdmin = async (req: any, res: any, next: any) => {
     // Enforce CSRF check on state-changing requests using Origin/Referer
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
       const origin = req.headers.origin || req.headers.referer;
@@ -397,488 +374,80 @@ async function startServer() {
       }
     }
 
-    if (!req.session || !req.session.isAdmin) {
-      console.warn(`[AdminCheck] Unauthorized admin access attempt to ${req.path}. SessionID: ${req.sessionID}`);
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(403).json({ error: "Accès refusé. Privilèges administrateur requis." });
+    }
+    const token = authHeader.split('Bearer ')[1];
+    try {
+      const decoded = jwt.verify(token, process.env.SESSION_SECRET || "bayano-secret-v4-final") as any;
+      if (decoded.isAdmin) {
+        req.session = { isAdmin: true }; // Mock session for compatibility
+        return next();
+      }
+    } catch (err) {
+      // Not a valid admin JWT token
+    }
+    return res.status(403).json({ error: "Accès refusé. Privilèges administrateur requis." });
+  };
+
+  app.get("/api/config", requireAuth, (req, res) => {
+    res.json({
+      geminiApiKey: process.env.GEMINI_API_KEY || "",
+    });
+  });
+
+  const checkAdminOptional = (req: any, res: any, next: any) => {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split('Bearer ')[1];
+      try {
+        const decoded = jwt.verify(token, process.env.SESSION_SECRET || "bayano-secret-v4-final") as any;
+        if (decoded.isAdmin) {
+          req.session = req.session || {};
+          req.session.isAdmin = true;
+        }
+      } catch (err) {}
     }
     next();
   };
 
   // Auth Routes
-  app.post("/api/auth/register", async (req, res) => {
-    const { email, password, name } = req.body;
-    if (!email || !password || !name) {
-      return res.status(400).json({ error: "Tous les champs sont requis" });
-    }
-
-    try {
-      const hashedPassword = await bcrypt.hash(password, 10);
-      const id = Math.random().toString(36).substring(7);
-      
-      await db.run("INSERT INTO users (id, email, password, name) VALUES (?, ?, ?, ?)", id, email, hashedPassword, name);
-      
-      const userId = id;
-      const userEmail = email;
-      const userName = name;
-      const userPlan = 'free';
-      const userCredits = 30;
-
-      req.session.regenerate((err) => {
-        if (err) return res.status(500).json({ error: "Erreur de session" });
-        req.session.userId = userId;
-        req.session.save((err) => {
-          if (err) return res.status(500).json({ error: "Erreur de session" });
-          res.json({ 
-            user: { id: userId, email: userEmail, name: userName, plan: userPlan, credits: userCredits },
-            sessionId: req.sessionID
-          });
-        });
-      });
-    } catch (error: any) {
-      if (error.message.includes("UNIQUE constraint failed")) {
-        return res.status(400).json({ error: "Cet email est déjà utilisé" });
-      }
-      res.status(500).json({ error: "Erreur lors de l'inscription" });
-    }
+  const authSyncLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 20, // Limit each IP to 20 sync requests per window
+    message: { error: "Trop de tentatives de synchronisation. Veuillez réessayer plus tard." },
+    standardHeaders: true,
+    legacyHeaders: false,
   });
 
-  app.post("/api/auth/login", async (req, res) => {
-    const { email, password } = req.body;
-    const user: any = await db.get("SELECT * FROM users WHERE email = ?", email);
-
-    if (user && user.password && await bcrypt.compare(password, user.password)) {
-      if (user.two_factor_enabled) {
-        req.session.tempUserId = user.id;
-        return res.json({ requires2FA: true });
-      }
-      
-      const userId = user.id;
-      const userEmail = user.email;
-      const userName = user.name;
-      const userPlan = user.plan;
-      const userCredits = user.credits;
-      const userSubExpires = user.subscription_expires_at;
-
-      req.session.regenerate((err) => {
-        if (err) return res.status(500).json({ error: "Erreur de session" });
-        req.session.userId = userId;
-        req.session.save((err) => {
-          if (err) return res.status(500).json({ error: "Erreur de session" });
-          res.json({ 
-            user: { id: userId, email: userEmail, name: userName, plan: userPlan, credits: userCredits, subscription_expires_at: userSubExpires },
-            sessionId: req.sessionID
-          });
-        });
-      });
-    } else {
-      res.status(401).json({ error: "Identifiants invalides" });
-    }
-  });
-
-  app.post("/api/auth/otp-request", async (req, res) => {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ error: "L'email est requis" });
-
-    const user: any = await db.get("SELECT * FROM users WHERE email = ?", email);
-    if (!user) {
-      return res.status(404).json({ error: "Aucun compte associé à cet email." });
-    }
-
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 minutes
-
-    await db.run("INSERT INTO password_resets (email, token, expires_at) VALUES (?, ?, ?) ON CONFLICT (email) DO UPDATE SET token = EXCLUDED.token, expires_at = EXCLUDED.expires_at", email, otpCode, expiresAt);
-
-    console.log(`[Auth] Code OTP pour ${email}: ${otpCode}`);
-    
-    res.json({ 
-      success: true, 
-      message: "Un code de connexion a été généré.",
-      devCode: otpCode 
-    });
-  });
-
-  app.post("/api/auth/otp-verify", async (req, res) => {
-    const { email, code } = req.body;
-    if (!email || !code) return res.status(400).json({ error: "Email et code requis" });
-
-    const resetRecord: any = await db.get("SELECT * FROM password_resets WHERE email = ? AND token = ?", email, code);
-    
-    if (!resetRecord) {
-      return res.status(400).json({ error: "Code invalide ou expiré" });
-    }
-
-    if (new Date(resetRecord.expires_at) < new Date()) {
-      await db.run("DELETE FROM password_resets WHERE email = ?", email);
-      return res.status(400).json({ error: "Ce code a expiré." });
-    }
-
-    const user: any = await db.get("SELECT * FROM users WHERE email = ?", email);
-    if (!user) return res.status(404).json({ error: "Utilisateur non trouvé" });
-
-    await db.run("DELETE FROM password_resets WHERE email = ?", email);
-
-    if (user.two_factor_enabled) {
-      req.session.tempUserId = user.id;
-      return res.json({ requires2FA: true });
-    }
-    
-    const userId = user.id;
-    const userEmail = user.email;
-    const userName = user.name;
-    const userPlan = user.plan;
-    const userCredits = user.credits;
-    const userSubExpires = user.subscription_expires_at;
-
-    req.session.regenerate((err) => {
-      if (err) return res.status(500).json({ error: "Erreur de session" });
-      req.session.userId = userId;
-      req.session.save((err) => {
-        if (err) return res.status(500).json({ error: "Erreur de session" });
-        res.json({ 
-          user: { id: userId, email: userEmail, name: userName, plan: userPlan, credits: userCredits, subscription_expires_at: userSubExpires },
-          sessionId: req.sessionID
-        });
-      });
-    });
-  });
-
-  app.post("/api/auth/forgot-password", async (req, res) => {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ error: "L'email est requis" });
-
-    const user: any = await db.get("SELECT * FROM users WHERE email = ?", email);
-    if (!user) {
-      // Pour des raisons de sécurité, on renvoie un succès même si l'email n'existe pas
-      return res.json({ success: true, message: "Si cet email existe, un code de réinitialisation a été envoyé." });
-    }
-
-    // Générer un code à 6 chiffres
-    const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // 15 minutes
-
-    // Sauvegarder dans la base de données
-    await db.run("INSERT INTO password_resets (email, token, expires_at) VALUES (?, ?, ?) ON CONFLICT (email) DO UPDATE SET token = EXCLUDED.token, expires_at = EXCLUDED.expires_at", email, resetCode, expiresAt);
-
-    console.log(`[Auth] Code de réinitialisation pour ${email}: ${resetCode}`);
-    
-    // Dans un environnement réel, on enverrait un email ici.
-    // Pour cette démo, on renvoie le code dans la réponse pour l'afficher à l'utilisateur.
-    res.json({ 
-      success: true, 
-      message: "Un code de réinitialisation a été généré.",
-      devCode: resetCode // Uniquement pour la démo sans serveur d'email
-    });
-  });
-
-  app.post("/api/auth/reset-password", async (req, res) => {
-    const { email, code, newPassword } = req.body;
-    if (!email || !code || !newPassword) {
-      return res.status(400).json({ error: "Tous les champs sont requis" });
-    }
-
-    const resetRecord: any = await db.get("SELECT * FROM password_resets WHERE email = ? AND token = ?", email, code);
-    
-    if (!resetRecord) {
-      return res.status(400).json({ error: "Code invalide ou expiré" });
-    }
-
-    if (new Date(resetRecord.expires_at) < new Date()) {
-      await db.run("DELETE FROM password_resets WHERE email = ?", email);
-      return res.status(400).json({ error: "Ce code a expiré. Veuillez refaire une demande." });
-    }
-
-    try {
-      const hashedPassword = await bcrypt.hash(newPassword, 10);
-      await db.run("UPDATE users SET password = ? WHERE email = ?", hashedPassword, email);
-      await db.run("DELETE FROM password_resets WHERE email = ?", email);
-      
-      res.json({ success: true, message: "Mot de passe réinitialisé avec succès" });
-    } catch (error) {
-      res.status(500).json({ error: "Erreur lors de la réinitialisation" });
-    }
-  });
-
-  app.post("/api/auth/2fa/verify-login", async (req, res) => {
-    const { token } = req.body;
-    const tempUserId = req.session.tempUserId;
-
-    if (!tempUserId) {
-      return res.status(401).json({ error: "Session expirée ou invalide" });
-    }
-
-    const user: any = await db.get("SELECT * FROM users WHERE id = ?", tempUserId);
-    if (!user) return res.status(404).json({ error: "Utilisateur non trouvé" });
-
-    const verified = speakeasy.totp.verify({
-      secret: user.two_factor_secret,
-      encoding: 'base32',
-      token
-    });
-
-    if (verified) {
-      const userId = user.id;
-      const userEmail = user.email;
-      const userName = user.name;
-      const userPlan = user.plan;
-      const userCredits = user.credits;
-      const userSubExpires = user.subscription_expires_at;
-
-      req.session.regenerate((err) => {
-        if (err) return res.status(500).json({ error: "Erreur de session" });
-        req.session.userId = userId;
-        req.session.save((err) => {
-          if (err) return res.status(500).json({ error: "Erreur de session" });
-          res.json({ 
-            user: { id: userId, email: userEmail, name: userName, plan: userPlan, credits: userCredits, subscription_expires_at: userSubExpires },
-            sessionId: req.sessionID
-          });
-        });
-      });
-    } else {
-      res.status(400).json({ error: "Code 2FA invalide" });
-    }
-  });
-
-  app.post("/api/auth/2fa/setup", requireAuth, async (req, res) => {
-    const user: any = await db.get("SELECT * FROM users WHERE id = ?", req.session.userId);
-    if (!user) return res.status(404).json({ error: "Utilisateur non trouvé" });
-
-    const secret = speakeasy.generateSecret({ name: `Bayano Académie (${user.email})` });
-    
-    await db.run("UPDATE users SET two_factor_secret = ? WHERE id = ?", secret.base32, user.id);
-
-    const qrCodeUrl = await QRCode.toDataURL(secret.otpauth_url!);
-    res.json({ qrCodeUrl, secret: secret.base32 });
-  });
-
-  app.post("/api/auth/2fa/enable", requireAuth, async (req, res) => {
-    const { token } = req.body;
-    const user: any = await db.get("SELECT * FROM users WHERE id = ?", req.session.userId);
-    
-    if (!user || !user.two_factor_secret) {
-      return res.status(400).json({ error: "Configuration 2FA non initialisée" });
-    }
-
-    const verified = speakeasy.totp.verify({
-      secret: user.two_factor_secret,
-      encoding: 'base32',
-      token
-    });
-
-    if (verified) {
-      await db.run("UPDATE users SET two_factor_enabled = 1 WHERE id = ?", user.id);
-      res.json({ success: true });
-    } else {
-      res.status(400).json({ error: "Code de vérification invalide" });
-    }
-  });
-
-  app.post("/api/auth/2fa/disable", requireAuth, async (req, res) => {
-    await db.run("UPDATE users SET two_factor_enabled = 0, two_factor_secret = NULL WHERE id = ?", req.session.userId);
-    res.json({ success: true });
-  });
-
-  app.post("/api/auth/logout", requireAuth, async (req, res) => {
-    req.session.destroy(() => {
-      res.clearCookie("bayano_sid_v4", {
-        secure: isProd,
-        sameSite: isProd ? 'none' : 'lax',
-        httpOnly: true
-      });
-      res.json({ success: true });
-    });
+  app.post("/api/auth/sync", authSyncLimiter, requireAuth, async (req, res) => {
+    res.json({ success: true, user: req.user });
   });
 
 
 
-  app.get("/api/auth/token-login", async (req, res) => {
-    const { token } = req.query;
-    if (!token) return res.status(400).json({ error: "Jeton manquant" });
 
-    const row: any = await db.get("SELECT user_id FROM temp_login_tokens WHERE token = ? AND created_at > NOW() - INTERVAL '5 minutes'", token);
-    
-    if (row) {
-      // Clean up token
-      await db.run("DELETE FROM temp_login_tokens WHERE token = ?", token);
-      
-      const userId = row.user_id;
-      req.session.regenerate((err) => {
-        if (err) return res.status(500).json({ error: "Erreur de session" });
-        req.session.userId = userId;
-        req.session.save(async (err) => {
-          if (err) return res.status(500).json({ error: "Erreur de session" });
-      const user: any = await db.get("SELECT id, email, name, plan, credits, subscription_expires_at FROM users WHERE id = ?", userId);
-          res.json({ user, sessionId: req.sessionID });
-        });
-      });
-    } else {
-      res.status(401).json({ error: "Jeton invalide ou expiré" });
-    }
-  });
 
-  app.get("/api/auth/me", requireAuth, async (req, res) => {
-    console.log(`[AuthMe] SessionID: ${req.sessionID}, UserID: ${req.session.userId}, CookieHeader: ${req.headers.cookie}`);
-    const user: any = await db.get("SELECT id, email, name, two_factor_enabled, plan, credits, subscription_expires_at FROM users WHERE id = ?", req.session.userId);
+  app.get("/api/auth/me", requireAuth, async (req: any, res: any) => {
+    const user: any = await db.get("SELECT id, email, name, two_factor_enabled, plan, credits, subscription_expires_at FROM users WHERE id = ?", req.user.id);
     if (user) {
       res.json({ 
-        user: { ...user, twoFactorEnabled: !!user.two_factor_enabled },
-        sessionId: req.sessionID
+        user: { ...user, twoFactorEnabled: !!user.two_factor_enabled }
       });
     } else {
       res.status(404).json({ error: "Utilisateur non trouvé" });
     }
   });
 
-  // Google OAuth Routes
-  app.get("/api/auth/google/url", async (req, res) => {
-    const clientId = process.env.GOOGLE_CLIENT_ID;
-    if (!clientId) {
-      return res.status(500).json({ error: "Google Client ID non configuré" });
-    }
-
-    const { origin } = req.query;
-    let redirectUri = "";
-    
-    if (origin && typeof origin === 'string') {
-      redirectUri = `${origin.replace(/\/$/, "")}/api/auth/google/callback`;
-    } else if (process.env.APP_URL) {
-      // Remove trailing slash if present
-      const baseUrl = process.env.APP_URL.replace(/\/$/, "");
-      redirectUri = `${baseUrl}/api/auth/google/callback`;
-    } else {
-      const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-      const host = req.headers['x-forwarded-host'] || req.get('host');
-      redirectUri = `${protocol}://${host}/api/auth/google/callback`;
-    }
-    
-    const stateObj = { origin: origin || '' };
-    const stateStr = Buffer.from(JSON.stringify(stateObj)).toString('base64');
-
-    const params = new URLSearchParams({
-      client_id: clientId,
-      redirect_uri: redirectUri,
-      response_type: 'code',
-      scope: 'openid email profile',
-      access_type: 'offline',
-      prompt: 'consent',
-      state: stateStr
-    });
-
-    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
-    res.json({ url: authUrl });
-  });
-
-  app.get("/api/auth/google/callback", async (req, res) => {
-    const { code, state } = req.query;
-    if (!code) return res.status(400).send("Code manquant");
-
-    const clientId = process.env.GOOGLE_CLIENT_ID;
-    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-    
-    let redirectUri = "";
-    let origin = "";
-    
-    if (state && typeof state === 'string') {
-      try {
-        const decoded = JSON.parse(Buffer.from(state, 'base64').toString('utf-8'));
-        if (decoded.origin) origin = decoded.origin;
-      } catch (e) {
-        console.error("Failed to decode state", e);
-      }
-    }
-
-    if (origin) {
-      redirectUri = `${origin.replace(/\/$/, "")}/api/auth/google/callback`;
-    } else if (process.env.APP_URL) {
-      const baseUrl = process.env.APP_URL.replace(/\/$/, "");
-      redirectUri = `${baseUrl}/api/auth/google/callback`;
-    } else {
-      const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-      const host = req.headers['x-forwarded-host'] || req.get('host');
-      redirectUri = `${protocol}://${host}/api/auth/google/callback`;
-    }
-
-    try {
-      // Exchange code for tokens
-      const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          code: code as string,
-          client_id: clientId!,
-          client_secret: clientSecret!,
-          redirect_uri: redirectUri,
-          grant_type: 'authorization_code',
-        }),
-      });
-
-      const tokens = await tokenResponse.json();
-      if (tokens.error) throw new Error(tokens.error_description);
-
-      // Get user info
-      const userResponse = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-        headers: { Authorization: `Bearer ${tokens.access_token}` },
-      });
-      const googleUser = await userResponse.json();
-
-      // Find or create user
-      let user: any = await db.get("SELECT * FROM users WHERE google_id = ? OR email = ?", googleUser.sub, googleUser.email);
-
-      if (!user) {
-        const id = Math.random().toString(36).substring(7);
-        await db.run("INSERT INTO users (id, email, name, google_id, plan, credits) VALUES (?, ?, ?, ?, ?, ?)",
-          id, googleUser.email, googleUser.name, googleUser.sub, 'free', 30);
-        user = { id, email: googleUser.email, name: googleUser.name, plan: 'free', credits: 30 };
-      } else if (!user.google_id) {
-        await db.run("UPDATE users SET google_id = ? WHERE id = ?", googleUser.sub, user.id);
-      }
-
-      req.session.userId = user.id;
-      console.log(`[OAuthCallback] UserID set: ${user.id}, SessionID: ${req.sessionID}`);
-      
-      // Generate a temporary token for the client to "claim" the session
-      const loginToken = Math.random().toString(36).substring(2) + Date.now().toString(36);
-      await db.run("INSERT INTO temp_login_tokens (token, user_id) VALUES (?, ?)", loginToken, user.id);
-
-      req.session.save((err) => {
-        if (err) {
-          console.error("Session save error:", err);
-          return res.status(500).send("Erreur de session");
-        }
-        res.send(`
-          <html>
-            <body>
-              <script>
-                if (window.opener) {
-                  window.opener.postMessage({ 
-                    type: 'OAUTH_AUTH_SUCCESS',
-                    token: '${loginToken}'
-                  }, window.location.origin);
-                  window.close();
-                } else {
-                  window.location.href = '/';
-                }
-              </script>
-              <p>Authentification réussie. Cette fenêtre va se fermer...</p>
-            </body>
-          </html>
-        `);
-      });
-    } catch (error: any) {
-      console.error("Google OAuth Error:", error);
-      res.status(500).send(`Erreur d'authentification: ${error.message}`);
-    }
-  });
-
   // SaaS Routes
-  app.get("/api/saas/status", requireAuth, async (req, res) => {
+  app.get("/api/saas/status", requireAuth, async (req: any, res: any) => {
     const user: any = await db.get("SELECT plan, credits, subscription_expires_at FROM users WHERE id = ?", req.session.userId);
     if (!user) return res.status(404).json({ error: "Utilisateur non trouvé" });
     res.json(user);
   });
 
-  app.post("/api/saas/subscribe", requireAuth, async (req, res) => {
+  app.post("/api/saas/subscribe", requireAuth, async (req: any, res: any) => {
     const { plan } = req.body; // 'student' or 'premium'
     if (!['student', 'premium'].includes(plan)) {
       return res.status(400).json({ error: "Plan invalide" });
@@ -896,7 +465,7 @@ async function startServer() {
     res.json({ success: true, plan, creditsAdded: creditsToAdd, expiresAt });
   });
 
-  app.post("/api/saas/buy-credits", requireAuth, async (req, res) => {
+  app.post("/api/saas/buy-credits", requireAuth, async (req: any, res: any) => {
     const { pack } = req.body; // 'mini' (50), 'medium' (150), 'memoire' (400)
     let creditsToAdd = 0;
     if (pack === 'mini') creditsToAdd = 50;
@@ -913,7 +482,7 @@ async function startServer() {
     res.json({ success: true, creditsAdded: creditsToAdd });
   });
 
-  app.post("/api/saas/estimate", requireAuth, async (req, res) => {
+  app.post("/api/saas/estimate", requireAuth, async (req: any, res: any) => {
     try {
       const { type, pages } = req.body; // type: 'plan' or 'generation'
       let estimatedCredits = 0;
@@ -942,7 +511,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/saas/deduct", requireAuth, async (req, res) => {
+  app.post("/api/saas/deduct", requireAuth, async (req: any, res: any) => {
     try {
       const { amount, description } = req.body;
       const user: any = await db.get("SELECT credits FROM users WHERE id = ?", req.session.userId);
@@ -967,7 +536,7 @@ async function startServer() {
   });
 
 // Project Routes
-  app.get("/api/projects", requireAuth, async (req, res) => {
+  app.get("/api/projects", requireAuth, async (req: any, res: any) => {
     try {
       const projects = await db.all("SELECT id, user_id, title, field, university, country, level, norm, min_pages, instructions, reference_text, methodology, documentType, generationMode, language, aiModel, plan, status, created_at FROM projects WHERE user_id = ? ORDER BY created_at DESC", req.session.userId);
       res.json(projects);
@@ -977,7 +546,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/projects", requireAuth, async (req, res) => {
+  app.post("/api/projects", requireAuth, async (req: any, res: any) => {
     try {
       const project = req.body;
       console.log(`[ProjectSave] User: ${req.session.userId}, ProjectID: ${project.id}`);
@@ -1017,7 +586,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/projects/:id/docx", requireAuth, async (req, res) => {
+  app.post("/api/projects/:id/docx", requireAuth, async (req: any, res: any) => {
     try {
       const { html } = req.body;
       const project = await db.get("SELECT user_id FROM projects WHERE id = ?", req.params.id) as any;
@@ -1041,7 +610,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/projects/:id", requireAuth, async (req, res) => {
+  app.get("/api/projects/:id", requireAuth, async (req: any, res: any) => {
     try {
       console.log(`[ProjectAccess] User ${req.session.userId} requesting project ${req.params.id}`);
       const project: any = await db.get("SELECT * FROM projects WHERE id = ?", req.params.id);
@@ -1065,7 +634,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/projects/:id/chapters", requireAuth, async (req, res) => {
+  app.get("/api/projects/:id/chapters", requireAuth, async (req: any, res: any) => {
     try {
       const project = await db.get("SELECT user_id FROM projects WHERE id = ?", req.params.id) as any;
       if (!project || project.user_id !== req.session.userId) {
@@ -1079,7 +648,7 @@ async function startServer() {
     }
   });
 
-  app.patch("/api/projects/:id/plan", requireAuth, async (req, res) => {
+  app.patch("/api/projects/:id/plan", requireAuth, async (req: any, res: any) => {
     try {
       const { plan } = req.body;
       await db.run("UPDATE projects SET plan = ?, status = 'plan_validated' WHERE id = ? AND user_id = ?", JSON.stringify(plan), req.params.id, req.session.userId);
@@ -1090,7 +659,7 @@ async function startServer() {
     }
   });
 
-  app.delete("/api/projects/:id", requireAuth, async (req, res) => {
+  app.delete("/api/projects/:id", requireAuth, async (req: any, res: any) => {
     try {
       const project = await db.get("SELECT user_id FROM projects WHERE id = ?", req.params.id) as any;
       if (!project || project.user_id !== req.session.userId) {
@@ -1106,7 +675,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/chapters", requireAuth, async (req, res) => {
+  app.get("/api/chapters", requireAuth, async (req: any, res: any) => {
     const chapters = await db.all(`
       SELECT c.* FROM chapters c 
       JOIN projects p ON c.project_id = p.id 
@@ -1115,7 +684,7 @@ async function startServer() {
     res.json(chapters);
   });
 
-  app.post("/api/chapters", requireAuth, async (req, res) => {
+  app.post("/api/chapters", requireAuth, async (req: any, res: any) => {
     try {
       const chapter = req.body;
       console.log(`[Chapters] Saving chapter ${chapter.id} for project ${chapter.project_id} (order: ${chapter.order_index})`);
@@ -1143,7 +712,7 @@ async function startServer() {
   });
 
   // Chat Sessions Routes
-  app.get("/api/chat-sessions", requireAuth, async (req, res) => {
+  app.get("/api/chat-sessions", requireAuth, async (req: any, res: any) => {
     try {
       const sessions = await db.all("SELECT id, title, messages, updated_at as updatedAt FROM chat_sessions WHERE user_id = ? ORDER BY updated_at DESC", req.session.userId);
       const formattedSessions = sessions.map((s: any) => ({
@@ -1157,7 +726,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/chat-sessions", requireAuth, async (req, res) => {
+  app.post("/api/chat-sessions", requireAuth, async (req: any, res: any) => {
     try {
       const session = req.body;
       const existing = await db.get("SELECT user_id FROM chat_sessions WHERE id = ?", session.id) as any;
@@ -1180,7 +749,7 @@ async function startServer() {
     }
   });
 
-  app.delete("/api/chat-sessions/:id", requireAuth, async (req, res) => {
+  app.delete("/api/chat-sessions/:id", requireAuth, async (req: any, res: any) => {
     try {
       await db.run("DELETE FROM chat_sessions WHERE id = ? AND user_id = ?", req.params.id, req.session.userId);
       res.json({ success: true });
@@ -1191,7 +760,20 @@ async function startServer() {
   });
 
   // Admin Routes
-  app.post("/api/admin/login", async (req, res) => {
+  const adminLoginLimiter = rateLimit({
+    windowMs: 5 * 60 * 1000, // 5 minutes
+    max: 10, // Limit each IP to 10 login requests per `window`
+    handler: (req: any, res, next, options) => {
+      res.status(options.statusCode).json({
+        error: "Trop de tentatives de connexion.",
+        resetTime: req.rateLimit?.resetTime?.getTime() || Date.now() + options.windowMs
+      });
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
+  app.post("/api/admin/login", adminLoginLimiter, async (req, res) => {
     try {
       const { password } = req.body;
       const currentSettingsRows = await db.all("SELECT * FROM settings");
@@ -1218,43 +800,19 @@ async function startServer() {
       }
       
       if (isMatch) {
-        req.session.regenerate((err) => {
-          if (err) {
-            console.error("Session regenerate error:", err);
-            return res.status(500).json({ error: "Erreur de session" });
-          }
-          req.session.isAdmin = true;
-          req.session.save((err: any) => {
-            if (err) {
-              console.error("Session save error:", err);
-              return res.status(500).json({ error: "Erreur de session" });
-            }
-            res.json({ success: true, sessionId: req.sessionID });
-          });
-        });
+        const token = jwt.sign({ isAdmin: true }, process.env.SESSION_SECRET || "bayano-secret-v4-final", { expiresIn: '1d' });
+        res.json({ success: true, token });
       } else {
         res.status(401).json({ error: "Mot de passe incorrect" });
       }
     } catch (err) {
-      console.error("Admin login error:", err);
+      // We don't use console.error here to avoid triggering error overlays for expected user errors
       res.status(500).json({ error: "Erreur de connexion" });
     }
   });
 
   app.post("/api/admin/logout", async (req, res) => {
-    if (req.session) {
-      req.session.destroy((err: any) => {
-        if (err) console.error("Session destroy error on logout:", err);
-        res.clearCookie("bayano_sid_v4", {
-          secure: isProd,
-          sameSite: isProd ? 'none' : 'lax',
-          httpOnly: true
-        });
-        res.json({ success: true });
-      });
-    } else {
-      res.json({ success: true });
-    }
+    res.json({ success: true });
   });
 
   app.get("/api/admin/error-logs", requireAdmin, async (req, res) => {
@@ -1391,7 +949,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/log-error", async (req, res) => {
+  app.post("/api/log-error", async (req: any, res: any) => {
     try {
       const { message, stack, context } = req.body;
       const userId = req.session?.userId || null;
@@ -1405,7 +963,7 @@ async function startServer() {
   });
 
   // Settings Routes
-  app.get("/api/settings", async (req, res) => {
+  app.get("/api/settings", checkAdminOptional, async (req: any, res: any) => {
     const rows = await db.all("SELECT * FROM settings");
     const settings: any = {
       priceStudent: 9.99,
@@ -1435,7 +993,7 @@ async function startServer() {
     res.json(settings);
   });
 
-  app.post("/api/settings", requireAdmin, async (req, res) => {
+  app.post("/api/settings", requireAdmin, async (req: any, res: any) => {
     try {
       const { settings } = req.body;
       

@@ -8,6 +8,8 @@ import { exportToDOCX, downloadDOCX, generateDOCXBase64 } from '../services/expo
 import { useTranslation } from 'react-i18next';
 import { useAlert } from '../contexts/AlertContext';
 
+import { getAuthToken } from '../utils/auth';
+
 interface GenerationViewProps {
   project: Project;
   user: User;
@@ -61,7 +63,7 @@ export default function GenerationView({ project, user, onUpdateUser, onShowPric
     
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      const sid = localStorage.getItem('bayano_sid');
+      const sid = await getAuthToken();
       if (sid) {
         headers['Authorization'] = `Bearer ${sid}`;
       }
@@ -74,14 +76,14 @@ export default function GenerationView({ project, user, onUpdateUser, onShowPric
         credentials: 'include'
       });
       if (res.status === 401) {
-        throw new Error("Session expirée. Veuillez vous reconnecter.");
+        throw new Error(t('generationView.sessionExpired'));
       }
       if (!res.ok) throw new Error("Failed to estimate credits");
       const estimateData = await res.json();
       
       if (!estimateData.hasEnough && !isResuming) {
         setStatus('error');
-        setError(`Crédits insuffisants. Il vous faut environ ${estimateData.estimatedCredits} crédits pour générer ce document.`);
+        setError(t('generationView.insufficientCredits', { credits: estimateData.estimatedCredits }));
         onShowPricing();
         return;
       }
@@ -91,7 +93,7 @@ export default function GenerationView({ project, user, onUpdateUser, onShowPric
         const deductRes = await fetch('/api/saas/deduct', {
           method: 'POST',
           headers,
-          body: JSON.stringify({ amount: estimateData.estimatedCredits, description: `Génération document: ${project.title.substring(0, 20)}...` }),
+          body: JSON.stringify({ amount: estimateData.estimatedCredits, description: `${t('generationView.docGeneration')}: ${project.title.substring(0, 20)}...` }),
           credentials: 'include'
         });
         
@@ -100,7 +102,7 @@ export default function GenerationView({ project, user, onUpdateUser, onShowPric
           onUpdateUser({ ...user, credits: deductData.remainingCredits });
         } else {
           setStatus('error');
-          setError("Erreur lors de la déduction des crédits.");
+          setError(t('generationView.creditDeductionError'));
           return;
         }
       }
@@ -128,9 +130,9 @@ export default function GenerationView({ project, user, onUpdateUser, onShowPric
       let chapterTargetWords = Math.max(1000, Math.ceil((totalTargetWords - introTargetWords - conclusionTargetWords) / numChapters));
 
       if (!isStandardDoc) {
-         introTargetWords = Math.max(300, Math.ceil(totalTargetWords * 0.1));
-         conclusionTargetWords = Math.max(300, Math.ceil(totalTargetWords * 0.1));
-         chapterTargetWords = Math.max(500, Math.ceil((totalTargetWords - introTargetWords - conclusionTargetWords) / numChapters));
+         introTargetWords = Math.max(150, Math.ceil(totalTargetWords * 0.1));
+         conclusionTargetWords = Math.max(150, Math.ceil(totalTargetWords * 0.1));
+         chapterTargetWords = Math.max(300, Math.ceil((totalTargetWords - introTargetWords - conclusionTargetWords) / numChapters));
       } else if (project.documentType === 'article') {
          introTargetWords = Math.max(500, Math.ceil(totalTargetWords * 0.15));
          conclusionTargetWords = Math.max(500, Math.ceil(totalTargetWords * 0.1));
@@ -161,7 +163,7 @@ export default function GenerationView({ project, user, onUpdateUser, onShowPric
         // For custom docs, just create a simple page de garde
         setCurrentStep(0);
         const frontMatter = {
-          page_de_garde: `${project.documentType?.toUpperCase() || 'DOCUMENT'}\n\nSujet : ${project.title}\n\nFilière : ${project.field || 'Non spécifié'}\nUniversité : ${project.university || 'Non spécifié'}`
+          page_de_garde: `${project.documentType?.toUpperCase() || 'DOCUMENT'}\n\n${t('generationView.subject')} : ${project.title}\n\n${t('generationView.field')} : ${project.field || t('generationView.notSpecified')}\n${t('generationView.university')} : ${project.university || t('generationView.notSpecified')}`
         };
         const frontMatterChapter: Chapter = {
           id: `${project.id}-front`,
@@ -198,7 +200,7 @@ export default function GenerationView({ project, user, onUpdateUser, onShowPric
         setTotalWords(prev => prev + introChapter!.word_count);
         await delay(300);
       }
-      let context = `Résumé de l'introduction: ${introChapter.content.substring(0, 500)}...\n`;
+      let context = `${t('generationView.introSummary')}: ${introChapter.content.substring(0, 500)}...\n`;
       setProgress((2 / totalSteps) * 100);
 
       // 3. Generate Chapters Sequentially to avoid rate limits
@@ -212,7 +214,7 @@ export default function GenerationView({ project, user, onUpdateUser, onShowPric
           try {
             const content = await generateChapterContent(project, plan, chap.titre, context, chapterTargetWords);
             if (!content || content.length < 100) {
-              throw new Error(`Le contenu généré pour le chapitre "${chap.titre}" est trop court.`);
+              throw new Error(t('generationView.chapterContentTooShort', { title: chap.titre }));
             }
             const wordCount = content.split(/\s+/).length;
             
@@ -246,7 +248,7 @@ export default function GenerationView({ project, user, onUpdateUser, onShowPric
       // Update context for conclusion with all chapter summaries
       let fullContext = context;
       generatedChapters.forEach((ch, i) => {
-        fullContext += `\nRésumé du chapitre ${i+1}: ${ch.content.substring(0, 300)}...\n`;
+        fullContext += `\n${t('generationView.chapterSummary')} ${i+1}: ${ch.content.substring(0, 300)}...\n`;
       });
 
       // 4, 5, 6. Generate Conclusion, Biblio, Annexes Sequentially

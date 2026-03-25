@@ -1,10 +1,12 @@
+import { getAuthToken } from './auth';
+
 export const logError = async (message: string, error?: any, context?: any) => {
   try {
     const stack = error instanceof Error ? error.stack : undefined;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
-    const sid = localStorage.getItem('bayano_sid');
+    const sid = await getAuthToken();
     if (sid) {
       headers['Authorization'] = `Bearer ${sid}`;
     }

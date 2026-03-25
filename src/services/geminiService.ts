@@ -2,6 +2,7 @@ import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
 import { PlanStructure, Project, AppSettings } from "../types";
 import { storageService } from "./storageService";
 import { logError } from "../utils/logger";
+import { getAuthToken } from "../utils/auth";
 
 let aiClient: GoogleGenAI | null = null;
 
@@ -11,7 +12,12 @@ export const getAiClient = async (): Promise<GoogleGenAI> => {
 
     if (!key || key === "undefined") {
       try {
-        const response = await fetch('/api/config');
+        const token = await getAuthToken();
+        const headers: Record<string, string> = {};
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+        const response = await fetch('/api/config', { headers });
         if (response.ok) {
           const data = await response.json();
           key = data.geminiApiKey;
@@ -109,11 +115,13 @@ const extractJson = (text: string): any => {
 };
 
 export const generatePlan = async (project: Partial<Project>): Promise<PlanStructure> => {
-  if (project.documentType === 'tp' && project.generationMode === 'direct') {
+  const isCustomDoc = !['tp', 'article', 'rapport', 'memoire'].includes(project.documentType || '');
+
+  if ((project.documentType === 'tp' || isCustomDoc) && project.generationMode === 'direct') {
     return {
       introduction: { titre: "Contexte et Objectifs", sections: [] },
       chapitres: [
-        { titre: "Développement du Travail Pratique", sections: [] }
+        { titre: "Développement du Travail", sections: [] }
       ],
       conclusion_generale: "Synthèse",
       annexes: [],
@@ -175,8 +183,8 @@ export const generatePlan = async (project: Partial<Project>): Promise<PlanStruc
   Le plan doit inclure:
   1. Une "INTRODUCTION GÉNÉRALE" (Première partie du travail) avec impérativement cette structure de sous-points:
      0.1. Objet du sujet
-     0.2. Problématique
-     0.3. Hypothèses
+     0.2. Problématique (Ne pas diviser en principale/secondaire. Formuler 1 à 4 questions de recherche selon le contexte)
+     0.3. Hypothèses (Réponses directes et brèves aux questions de la problématique)
      0.4. Méthodes et techniques (0.4.1. Méthodes: Historique, Descriptive, Analytique, etc. ; 0.4.2. Techniques: Documentaire, Interview, Enquête, etc.)
      0.5. Cadre théorique
      0.6. Choix et intérêt du sujet (Scientifique, Social et Personnel)
@@ -195,7 +203,7 @@ export const generatePlan = async (project: Partial<Project>): Promise<PlanStruc
   - UTILISE L'OUTIL DE RECHERCHE (Google Search) pour te renseigner sur la structure standard, les normes et les attentes habituelles pour un document de type "${project.documentType}".
   - Adapte la structure au sujet exact en te basant sur tes recherches pour éviter de sortir un document non conforme aux normes.
   - Détermine intelligemment si ce type de document nécessite habituellement des notes de bas de page, une bibliographie, ou des annexes. Si oui, inclus-les dans le plan (remplis les tableaux correspondants). Sinon, laisse les tableaux vides [].
-  - Respecte scrupuleusement le nombre de pages demandé (${project.min_pages} pages). Ajuste le nombre de sections et sous-sections pour atteindre ce volume sans remplissage inutile.
+  - Respecte scrupuleusement le nombre de pages demandé (${project.min_pages} pages). Ajuste le nombre de parties (chapitres) et de sous-sections pour correspondre EXACTEMENT à ce volume. Par exemple, pour un document de 5 pages, 1 ou 2 parties suffisent amplement. Ne crée pas un plan trop détaillé pour un document court.
   - Si l'utilisateur a fourni des consignes particulières, elles priment sur tout le reste.
   
   IMPORTANT POUR LE JSON:
@@ -207,12 +215,12 @@ export const generatePlan = async (project: Partial<Project>): Promise<PlanStruc
 
   const prompt = `Génère un plan détaillé de ${docTypeStr} pour le sujet suivant:
   Sujet: ${project.title}
-  Filière: ${project.field}
-  Université: ${project.university}
-  Pays: ${project.country}
-  Niveau: ${project.level}
+  Filière: ${project.field || 'Non spécifié'}
+  Université: ${project.university || 'Non spécifié'}
+  Pays: ${project.country || 'Non spécifié'}
+  Niveau: ${project.level || 'Non spécifié'}
   Langue: ${project.language || 'Français'}
-  Norme bibliographique: ${project.norm}
+  Norme bibliographique: ${project.norm || 'APA'}
   Nombre minimum de pages: ${project.min_pages}
   ${project.instructions ? `CONSIGNES PARTICULIÈRES: ${project.instructions}` : ''}
   ${project.referenceText ? `EXEMPLE/MODÈLE À SUIVRE (Analyse attentivement la structure, le plan et le style de ce document pour t'en inspirer fidèlement): ${project.referenceText.substring(0, 5000)}` : ''}
@@ -241,8 +249,6 @@ export const generatePlan = async (project: Partial<Project>): Promise<PlanStruc
     "annexes": ["string"],
     "bibliographie_indicative": ["string"]
   }`;
-
-  const isCustomDoc = !['tp', 'article', 'rapport', 'memoire'].includes(project.documentType || '');
   
   const response = await generateContentWithRetry({
     model: await getModel(project as Project),
@@ -250,7 +256,67 @@ export const generatePlan = async (project: Partial<Project>): Promise<PlanStruc
     config: {
       systemInstruction: await getSystemInstruction(),
       responseMimeType: "application/json",
-      ...(isCustomDoc ? { tools: [{ googleSearch: {} }] } : {})
+      ...(isCustomDoc ? { tools: [{ googleSearch: {} }] } : {}),
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          introduction: {
+            type: Type.OBJECT,
+            properties: {
+              titre: { type: Type.STRING },
+              sections: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    titre: { type: Type.STRING },
+                    sous_sections: {
+                      type: Type.ARRAY,
+                      items: { type: Type.STRING }
+                    }
+                  },
+                  required: ["titre", "sous_sections"]
+                }
+              }
+            },
+            required: ["titre", "sections"]
+          },
+          chapitres: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                titre: { type: Type.STRING },
+                sections: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      titre: { type: Type.STRING },
+                      sous_sections: {
+                        type: Type.ARRAY,
+                        items: { type: Type.STRING }
+                      }
+                    },
+                    required: ["titre", "sous_sections"]
+                  }
+                }
+              },
+              required: ["titre", "sections"]
+            }
+          },
+          conclusion_generale: { type: Type.STRING },
+          bibliographie_indicative: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
+          },
+          annexes: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
+          }
+        },
+        required: ["introduction", "chapitres", "conclusion_generale", "bibliographie_indicative"]
+      }
     },
   });
 
@@ -347,8 +413,9 @@ export const generateChapterContent = async (
     specificInstructions = `
   CONSIGNES SPÉCIFIQUES POUR CE DOCUMENT (${project.documentType}) :
   - Adapte-toi strictement au sujet et aux consignes de l'utilisateur.
-  - Le contenu doit être direct, pertinent et répondre exactement à ce qui est demandé.
+  - Le contenu doit être pertinent et répondre exactement à ce qui est demandé.
   - Fais un effort particulier pour respecter le volume attendu (environ ${targetWords} mots pour cette partie) afin d'atteindre le nombre de pages global demandé par l'utilisateur.
+  ${project.generationMode === 'direct' ? "- MODE DIRECT: Réponds directement et précisément aux consignes, va droit au but sans faire de grandes phrases d'introduction ou de conclusion académiques si ce n'est pas nécessaire." : "- MODE STRUCTURÉ: Suis fidèlement le plan établi et développe chaque partie de manière approfondie."}
     `;
   }
 
@@ -376,12 +443,18 @@ export const generateChapterContent = async (
   - IMPORTANT (DATES ET RÉFÉRENCES) : Les délimitations temporelles du sujet doivent s'étendre jusqu'à une période très récente (idéalement jusqu'à l'année en cours, ${currentYear}). De même, si tu cites des sites web dans les notes de bas de page ou la bibliographie, la "date de consultation" doit être de l'année en cours (${currentYear}).
   - Utilise des citations réelles ou réalistes respectant la norme ${project.norm}.
   ${footnoteInstruction}
-  ${isIntroduction || isConclusion ? `- INTERDICTION STRICTE DE TABLEAUX : Ne génère AUCUN tableau dans cette section (${isIntroduction ? "l'introduction" : "la conclusion"}). Les tableaux sont strictement réservés au développement du travail.` : `- IMPORTANT (TABLEAUX) : Intègre de VRAIS tableaux Markdown bien formatés (avec les balises | et -) pour présenter des données, des comparaisons ou des statistiques. N'utilise pas d'autres signes ou balises HTML.`}
+  ${isIntroduction || isConclusion || isBibliography || isAnnexes ? `- INTERDICTION STRICTE DE TABLEAUX : Ne génère AUCUN tableau dans cette section. Les tableaux sont strictement réservés au développement du travail.` : `- IMPORTANT (TABLEAUX) : Intègre de VRAIS tableaux Markdown bien formatés (avec les balises | et -) pour présenter des données, des comparaisons ou des statistiques. N'utilise pas d'autres signes ou balises HTML.`}
   - Le contenu doit être extrêmement riche, détaillé et exhaustif.
   - NE RÉPÈTE PAS LE TITRE DE LA SECTION ("${chapterTitle}") au début de ton texte. Commence directement par le contenu ou les sous-titres de niveau inférieur (ex: ## 1.1. Titre).
   - Vise STRICTEMENT environ ${targetWords} mots pour cette section. C'est une EXIGENCE ABSOLUE pour atteindre l'objectif global de ${project.min_pages} pages fixé par l'utilisateur. Tu dois générer suffisamment de texte, d'analyses et d'exemples pour atteindre ce volume. Ne sois ni trop court ni trop long.
   - Développe chaque point avec des exemples, des analyses, des citations et des arguments solides. Ne sois pas superficiel.
   - Assure une transition fluide entre les sous-sections.
+
+  ${isIntroduction ? `
+  CONSIGNES SPÉCIFIQUES POUR L'INTRODUCTION (Problématique et Hypothèses) :
+  - Pour la sous-section "Problématique" : NE FAIS PAS de distinction stricte entre "problématique principale" et "problématiques secondaires". Rédige le texte de manière fluide selon le contexte, en posant simplement 1, 2, 3 ou 4 questions de recherche pertinentes selon la complexité du sujet et les consignes de l'utilisateur.
+  - Pour la sous-section "Hypothèses" : Réponds DIRECTEMENT et BRIÈVEMENT à chacune des questions posées dans la problématique. Ne fais pas de longs développements théoriques ici, donne des réponses claires et concises (les hypothèses de recherche) qui seront vérifiées dans le corps du travail.
+  ` : ''}
 
   ${specificInstructions}
 
@@ -536,6 +609,66 @@ export const refinePlan = async (
     config: {
       systemInstruction: await getSystemInstruction(),
       responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          introduction: {
+            type: Type.OBJECT,
+            properties: {
+              titre: { type: Type.STRING },
+              sections: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    titre: { type: Type.STRING },
+                    sous_sections: {
+                      type: Type.ARRAY,
+                      items: { type: Type.STRING }
+                    }
+                  },
+                  required: ["titre", "sous_sections"]
+                }
+              }
+            },
+            required: ["titre", "sections"]
+          },
+          chapitres: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                titre: { type: Type.STRING },
+                sections: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      titre: { type: Type.STRING },
+                      sous_sections: {
+                        type: Type.ARRAY,
+                        items: { type: Type.STRING }
+                      }
+                    },
+                    required: ["titre", "sous_sections"]
+                  }
+                }
+              },
+              required: ["titre", "sections"]
+            }
+          },
+          conclusion_generale: { type: Type.STRING },
+          bibliographie_indicative: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
+          },
+          annexes: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
+          }
+        },
+        required: ["introduction", "chapitres", "conclusion_generale", "bibliographie_indicative"]
+      }
     },
   });
 

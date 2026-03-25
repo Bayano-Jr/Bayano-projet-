@@ -19,12 +19,35 @@ export default function AdminBackoffice({ onClose }: AdminBackofficeProps) {
   const [password, setPassword] = useState('');
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
-  const [loginError, setLoginError] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [lockoutEndTime, setLockoutEndTime] = useState<number | null>(null);
+  const [countdown, setCountdown] = useState<number>(0);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'ai' | 'users' | 'pricing' | 'errors'>('dashboard');
 
   useEffect(() => {
     loadSettings();
   }, []);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (lockoutEndTime) {
+      interval = setInterval(() => {
+        const now = Date.now();
+        const remaining = Math.ceil((lockoutEndTime - now) / 1000);
+        if (remaining <= 0) {
+          setLockoutEndTime(null);
+          setCountdown(0);
+          setLoginError(null);
+          clearInterval(interval);
+        } else {
+          setCountdown(remaining);
+        }
+      }, 1000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [lockoutEndTime]);
 
   const loadSettings = async () => {
     const data = await storageService.getSettings();
@@ -35,7 +58,7 @@ export default function AdminBackoffice({ onClose }: AdminBackofficeProps) {
     e.preventDefault();
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      const sid = localStorage.getItem('bayano_sid');
+      const sid = localStorage.getItem('bayano_admin_token');
       if (sid) {
         headers['Authorization'] = `Bearer ${sid}`;
       }
@@ -48,24 +71,32 @@ export default function AdminBackoffice({ onClose }: AdminBackofficeProps) {
       
       if (res.ok) {
         const data = await res.json();
-        if (data.sessionId) {
-          localStorage.setItem('bayano_sid', data.sessionId);
+        if (data.token) {
+          localStorage.setItem('bayano_admin_token', data.token);
         }
         setIsAuthenticated(true);
-        setLoginError(false);
+        setLoginError(null);
+        setLockoutEndTime(null);
         loadSettings(); // Reload settings to get the real admin password
       } else {
-        setLoginError(true);
+        const errData = await res.json().catch(() => ({}));
+        if (res.status === 429 && errData.resetTime) {
+          setLockoutEndTime(errData.resetTime);
+          const remaining = Math.ceil((errData.resetTime - Date.now()) / 1000);
+          setCountdown(remaining > 0 ? remaining : 0);
+        } else {
+          setLoginError(errData.error || "Mot de passe incorrect.");
+        }
       }
-    } catch (err) {
-      setLoginError(true);
+    } catch (err: any) {
+      setLoginError(err.message || "Erreur de connexion.");
     }
   };
 
   const handleLogout = async () => {
     try {
       const headers: Record<string, string> = {};
-      const sid = localStorage.getItem('bayano_sid');
+      const sid = localStorage.getItem('bayano_admin_token');
       if (sid) {
         headers['Authorization'] = `Bearer ${sid}`;
       }
@@ -77,6 +108,7 @@ export default function AdminBackoffice({ onClose }: AdminBackofficeProps) {
     } catch (err) {
       console.error(err);
     }
+    localStorage.removeItem('bayano_admin_token');
     setIsAuthenticated(false);
   };
 
@@ -137,16 +169,22 @@ export default function AdminBackoffice({ onClose }: AdminBackofficeProps) {
               <label className="block text-xs font-bold uppercase tracking-widest text-slate-400 mb-2">Mot de passe</label>
               <input 
                 type="password" 
-                className={`academic-input ${loginError ? 'border-red-500 ring-red-500/10' : ''}`}
+                className={`academic-input ${loginError || lockoutEndTime ? 'border-red-500 ring-red-500/10' : ''}`}
                 placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoFocus
+                disabled={lockoutEndTime !== null}
               />
-              {loginError && <p className="text-red-500 text-xs mt-2 font-medium">Mot de passe incorrect.</p>}
+              {loginError && !lockoutEndTime && <p className="text-red-500 text-xs mt-2 font-medium">{loginError}</p>}
+              {lockoutEndTime !== null && (
+                <p className="text-red-500 text-xs mt-2 font-medium">
+                  Trop de tentatives. Réessayez dans {Math.floor(countdown / 60)}:{(countdown % 60).toString().padStart(2, '0')}.
+                </p>
+              )}
             </div>
-            <button type="submit" className="btn-primary w-full">
-              Se connecter
+            <button type="submit" className="btn-primary w-full" disabled={lockoutEndTime !== null}>
+              {lockoutEndTime !== null ? 'Verrouillé' : 'Se connecter'}
             </button>
             <button type="button" onClick={onClose} className="text-slate-400 hover:text-academic-900 text-sm w-full text-center transition-colors">
               Retour à l'application

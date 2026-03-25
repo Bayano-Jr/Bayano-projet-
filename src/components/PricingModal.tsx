@@ -3,6 +3,8 @@ import { motion } from 'motion/react';
 import { Check, X, Zap, Crown, GraduationCap, CreditCard, AlertCircle } from 'lucide-react';
 import { User } from '../types';
 
+import { getAuthToken } from '../utils/auth';
+
 interface PricingModalProps {
   user: User;
   onClose: () => void;
@@ -44,7 +46,7 @@ export default function PricingModal({ user, onClose, onUpdateUser }: PricingMod
     setError('');
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      const sid = localStorage.getItem('bayano_sid');
+      const sid = await getAuthToken();
       if (sid) {
         headers['Authorization'] = `Bearer ${sid}`;
       }
@@ -80,7 +82,7 @@ export default function PricingModal({ user, onClose, onUpdateUser }: PricingMod
     setError('');
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      const sid = localStorage.getItem('bayano_sid');
+      const sid = await getAuthToken();
       if (sid) {
         headers['Authorization'] = `Bearer ${sid}`;
       }
