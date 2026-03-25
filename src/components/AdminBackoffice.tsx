@@ -311,9 +311,7 @@ export default function AdminBackoffice({ onClose }: AdminBackofficeProps) {
                       >
                         <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (Recommandé - Qualité Max)</option>
                         <option value="gemini-3-flash-preview">Gemini 3 Flash (Dernière génération - Rapide)</option>
-                        <option value="gemini-flash-latest">Gemini 1.5 Flash (Stable - Meilleurs Quotas)</option>
-                        <option value="gemini-flash-lite-latest">Gemini 1.5 Flash Lite (Économique)</option>
-                        <option value="gemini-2.5-flash">Gemini 2.5 Flash (Expérimental)</option>
+                        <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash Lite (Économique)</option>
                       </select>
                       <p className="text-[10px] text-slate-400 mt-2 italic">Le modèle Pro offre une meilleure qualité rédactionnelle mais peut être plus lent.</p>
                     </div>

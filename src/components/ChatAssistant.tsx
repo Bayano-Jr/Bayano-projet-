@@ -529,7 +529,7 @@ export default function ChatAssistant({ user, onUpdateUser, onShowPricing }: Cha
             >
               <option value="gemini-3-flash-preview">Gemini 3 Flash</option>
               <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro</option>
-              <option value="gemini-2.5-flash-preview">Gemini 2.5 Flash</option>
+              <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash Lite</option>
             </select>
             
             <button 

@@ -990,6 +990,16 @@ async function startServer() {
         }
       }
     });
+
+    // Automatically upgrade old models to valid Gemini 3 series models
+    if (settings.aiModel === 'gemini-2.5-flash-preview' || settings.aiModel === 'gemini-2.5-flash' || settings.aiModel === 'gemini-flash-latest') {
+      settings.aiModel = 'gemini-3-flash-preview';
+    } else if (settings.aiModel === 'gemini-1.5-pro' || settings.aiModel === 'gemini-pro') {
+      settings.aiModel = 'gemini-3.1-pro-preview';
+    } else if (settings.aiModel === 'gemini-flash-lite-latest') {
+      settings.aiModel = 'gemini-3.1-flash-lite-preview';
+    }
+
     res.json(settings);
   });
 
